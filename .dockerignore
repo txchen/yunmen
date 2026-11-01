@@ -1,0 +1,7 @@
+.git
+.scratch
+data
+dist
+deploy/secrets
+web/node_modules
+web/dist
