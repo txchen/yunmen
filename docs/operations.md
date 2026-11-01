@@ -9,6 +9,7 @@
 | `YUNMEN_MASTER_KEY` / `YUNMEN_MASTER_KEY_FILE` | exactly one | Base64 of 32 random bytes (`yunmen-server genkey`). |
 | `YUNMEN_DATA_DIR` | no | Database directory (default `./data`, `/data` in the image). |
 | `YUNMEN_LISTEN` | no | Listen address (default `127.0.0.1:8080`, `0.0.0.0:8080` in the image). |
+| `YUNMEN_CLIENT_IP_HEADER` | no | Header carrying the visitor's address, set by the tunnel or proxy in front, e.g. `Cf-Connecting-IP` or `X-Real-IP`. Used to rate limit sign-in per visitor. For `X-Forwarded-For` the last address is used. Set it only when nothing but that proxy can reach Yunmen, because anyone else could send the header. Unset, the TCP peer address is used. |
 | `YUNMEN_ACCESS_TEAM_DOMAIN` | access mode only | `https://<team>.cloudflareaccess.com` |
 | `YUNMEN_ACCESS_AUD` | access mode only | Access application audience tag |
 | `YUNMEN_ACCESS_OWNER_EMAILS` | access mode only | Comma-separated browser identities treated as the owner |

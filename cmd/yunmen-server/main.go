@@ -118,7 +118,7 @@ func serve() error {
 	hs := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	log.Info("yunmen listening", "addr", cfg.Listen, "mode", cfg.Mode, "origin", cfg.OriginString(), "version", version.Version)
+	log.Info("yunmen listening", "addr", cfg.Listen, "mode", cfg.Mode, "origin", cfg.OriginString(), "client_ip_header", cfg.ClientIPHeader, "version", version.Version)
 	select {
 	case err := <-errc:
 		return err

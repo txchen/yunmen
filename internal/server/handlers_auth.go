@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/txchen/yunmen/internal/auth"
 	"github.com/txchen/yunmen/internal/live"
@@ -14,13 +15,20 @@ type ownerProof struct {
 	Code     string `json:"code"`
 }
 
-// clientKey identifies the caller for rate limiting. Behind Cloudflare the
-// connecting address is in Cf-Connecting-IP; the header is trusted only in
-// access mode, where every request has passed Cloudflare.
+// clientKey identifies the caller for rate limiting. The visitor address
+// header is trusted only when configured (YUNMEN_CLIENT_IP_HEADER), or in
+// access mode, where every request has passed Cloudflare. Otherwise a
+// client could pick a fresh address for every guess.
 func (s *Server) clientKey(r *http.Request) string {
-	if s.access != nil {
-		if ip := r.Header.Get("Cf-Connecting-IP"); ip != "" {
-			return ip
+	header := s.cfg.ClientIPHeader
+	if header == "" && s.access != nil {
+		header = "Cf-Connecting-IP"
+	}
+	if header != "" {
+		// A proxy that appends (X-Forwarded-For) puts its own view last.
+		values := strings.Split(r.Header.Get(header), ",")
+		if ip := net.ParseIP(strings.TrimSpace(values[len(values)-1])); ip != nil {
+			return ip.String()
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

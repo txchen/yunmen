@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,10 @@ type Config struct {
 	DataDir string
 	Origin  *url.URL // exact browser origin, e.g. https://yunmen.example.com
 	Access  auth.AccessConfig
+	// ClientIPHeader names a request header set by the proxy or tunnel in
+	// front of Yunmen that carries the visitor's address, used to rate
+	// limit sign-in per visitor. Empty means use the TCP peer address.
+	ClientIPHeader string
 }
 
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "yunmen.db") }
@@ -50,10 +55,15 @@ func splitList(s string) []string {
 // LoadConfig parses environment configuration. The mode must be explicit:
 // a missing Access setting is an error, never a fallback to standalone.
 func LoadConfig(getenv func(string) string) (Config, error) {
+	var errs []error
 	c := Config{
 		Mode:    Mode(getenv("YUNMEN_MODE")),
 		Listen:  getenv("YUNMEN_LISTEN"),
 		DataDir: getenv("YUNMEN_DATA_DIR"),
+	}
+	c.ClientIPHeader = http.CanonicalHeaderKey(strings.TrimSpace(getenv("YUNMEN_CLIENT_IP_HEADER")))
+	if c.ClientIPHeader != "" && !validHeaderName(c.ClientIPHeader) {
+		errs = append(errs, errors.New("YUNMEN_CLIENT_IP_HEADER must be a header name such as Cf-Connecting-IP"))
 	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:8080"
@@ -61,7 +71,6 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if c.DataDir == "" {
 		c.DataDir = "./data"
 	}
-	var errs []error
 	origin := getenv("YUNMEN_PUBLIC_ORIGIN")
 	u, err := url.Parse(origin)
 	switch {
@@ -104,6 +113,15 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("YUNMEN_MODE %q is invalid: use `access` or `standalone`", c.Mode))
 	}
 	return c, errors.Join(errs...)
+}
+
+func validHeaderName(h string) bool {
+	for _, r := range h {
+		if !(r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return h != ""
 }
 
 func isLoopback(host string) bool {
