@@ -36,7 +36,7 @@ A backup is two things, kept apart:
 1. **The database.** With the Compose setup it is `deploy/data/yunmen.db`. Stop the server (`docker compose stop`) and copy it. Alternatively, while it runs, use `sqlite3 deploy/data/yunmen.db ".backup /backup/yunmen.db"`. Do not copy the live file with plain `cp`, because the WAL may hold recent writes.
 2. **The master key**, stored separately, in a password manager or offline. The database without the key cannot decrypt target credentials or the TOTP seed. The key without the database is useless.
 
-To restore, put the database back in place, configure the same master key, and start the server. The server checks the key before touching anything. Then run `revoke-all`, so sessions and devices revoked after the backup was taken cannot come back. Re-pair your CLI devices.
+To restore, keep the server stopped, put the database back in place, and configure the same master key. Run `docker compose run --rm yunmen revoke-all` before starting the service, so sessions and devices revoked after the backup was taken never become usable again. Then run `docker compose up -d` and re-pair your CLI devices. Yunmen verifies the master key when opening the database.
 
 If the key is lost, the encrypted data cannot be recovered. Start a new database, run `init` again, and re-enter the hosts.
 

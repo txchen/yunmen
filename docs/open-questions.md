@@ -1,8 +1,8 @@
 # Open questions and unverified assumptions
 
-## Needs a real Cloudflare deployment
+## Remaining deployment validation
 
-The personal deployment uses a Cloudflare Tunnel without Access (owner decision, 2026-11-01). Items 1 and 2 below matter only for the optional Access mode. None of these ran against Cloudflare. Tests use a local fake issuer with the claim shapes below.
+The personal deployment uses a Cloudflare Tunnel without Access (owner decision, 2026-11-01). Items 1 and 2 below matter only for the optional Access mode. The owner has deployed Yunmen and confirmed that the CLI connects successfully. Long-lived sessions, failure recovery through the tunnel, and Access mode remain unverified. Automated Access tests use a local fake issuer with the claim shapes below.
 
 1. **Service-token claim shape.** Yunmen treats an assertion with a non-empty `common_name` and an empty `sub` as a service token whose Client ID is `common_name`. Confirm it against a real assertion: decode `Cf-Access-Jwt-Assertion` on a CLI request (`yunmen-server` logs nothing secret, so use a test origin).
 2. **Assertion expiry versus terminal lifetime.** Terminals end at the assertion's `exp`. If Cloudflare issues short-lived assertions for service tokens or browser sessions, long sessions will drop at that time. Measure the real `exp` for both, then decide whether to keep this rule or to cap only by Yunmen expiry and re-check the assertion on reconnect.

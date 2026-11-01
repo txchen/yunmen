@@ -2,7 +2,7 @@
   <img src="docs/assets/yunmen.svg" alt="Yunmen · 云门: your servers in a browser tab or a terminal, with SSH keys kept on the gateway" width="860">
 </h1>
 
-Yunmen is a small self-hosted SSH gateway for one person and their own servers. Open a browser tab or run `yunmen connect` on any of your machines, and you get a real terminal on your home box, your VPS or your NAS. The SSH keys and passwords stay on the gateway. The laptop in front of you only holds a Yunmen credential that you can revoke.
+Yunmen is a lightweight self-hosted SSH gateway for one person and their own servers. Open a browser tab or run `yunmen connect` on any of your machines, and you get a real terminal on your home box, your VPS or your NAS. The SSH keys and passwords stay on the gateway. The laptop in front of you only holds a Yunmen credential that you can revoke.
 
 I built Yunmen because I wanted my servers from anywhere: a browser on another machine, or the terminal on a work laptop. I didn't want to copy private keys to every device. A browser SSH tool covered part of that, but I kept seeing garbled characters I could never explain, and I wanted a CLI that went through the same gateway as the browser. So Yunmen does one job. It keeps a host list and the keys in one place, puts a password and TOTP in front of them, and passes terminal bytes through untouched, so vim, tmux, CJK text and emoji look the way they do over plain SSH.
 
@@ -10,6 +10,7 @@ The name is the pinyin for 云门, "cloud gate": a single gate in the cloud, in 
 
 ## Features
 
+- **Small by design.** Browser and CLI terminals, a shared host and key library, and simple file transfers in one Go binary with an embedded web UI and SQLite. The Linux amd64 container image is about **6.8 MB to download and 27.4 MB unpacked**.[^image-size]
 - **Browser terminals.** Open as many tabs as you like, on one host or several. They are full PTYs, so tmux, vim, Ctrl-C and resizing behave as they do in a local terminal.
 - **A CLI for your other machines.** `yunmen connect` opens the same hosts from Linux, macOS or Windows, with a searchable host picker. It needs no SSH key and no extra software on the client.
 - **Keys stay home.** Generate an Ed25519 key on the gateway and paste its public line into `authorized_keys`, or import a key you already have. One key can serve many hosts. Hosts that use standard password authentication work too.
@@ -20,6 +21,8 @@ The name is the pinyin for 云门, "cloud gate": a single gate in the cloud, in 
 - **Nothing to babysit.** One small container with SQLite holds everything. Keys, passwords and the TOTP seed in it are encrypted with a master key that you keep.
 
 Yunmen does not keep shells alive by itself. When a connection drops, reconnecting starts a new shell. Run [tmux](https://github.com/tmux/tmux) or [Kiwa](https://github.com/txchen/kiwa) on the host to pick up where you left off.
+
+[^image-size]: Measured on 2026-10-31 for `ghcr.io/txchen/yunmen`, Linux amd64 manifest `sha256:56f17a6df2acb26c536612cc4a6ce39af3a16ec60b0d65f75a084849dfecb51d`. Download size is the sum of compressed registry layers; unpacked size is Docker's image size. MB is decimal. These figures describe the image, not runtime memory or stored data, and may change between releases.
 
 ## How to use
 
@@ -93,7 +96,7 @@ Inside a session every key goes to the server, Ctrl-C included. Type `Enter ~ .`
 - Yunmen, and Cloudflare when you use a tunnel, decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
 - The sign-in page is reachable by anyone who knows the address. Wrong guesses are rate limited per visitor and in total, so they cannot break in, but a determined attacker can briefly lock you out of signing in. See [docs/deployment.md](docs/deployment.md#exposure-without-cloudflare-access).
 - Yunmen is at v0.0.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
-- Long sessions through a real Cloudflare Tunnel, and the optional Cloudflare Access mode, still need testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
+- I've deployed the gateway myself and connected to it from the CLI. Long sessions through a real Cloudflare Tunnel, and the optional Cloudflare Access mode, still need testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
 
 ## How to develop
 

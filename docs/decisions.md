@@ -14,7 +14,7 @@ Choices made while building v1. Each one is reversible unless it says otherwise.
 | Access JWT | `github.com/golang-jwt/jwt/v5`, RS256 only | Cloudflare signs with RS256. |
 | Keyring | `github.com/zalando/go-keyring` (macOS Keychain, Secret Service on Linux) | Falls back to `secrets.json` (0600) when unavailable. |
 | Versioning | One version string (`internal/version`) for server, CLI and image | Matching versions are the supported combination. |
-| Release | GitHub Releases for CLI archives and checksums; GHCR multi-arch image (`.github/workflows/release.yml`) | Not run yet. |
+| Release | CLI archives and checksums on GitHub Releases (`.github/workflows/release.yml`); GHCR multi-arch image via manual `.github/workflows/image.yml` | Publish both from the same release tag. |
 
 ## Initial support matrix
 
