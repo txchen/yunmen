@@ -1,51 +1,110 @@
-# Yunmen
+<h1 align="center">
+  <img src="docs/assets/yunmen.svg" alt="Yunmen · 云门: your servers in a browser tab or a terminal, with SSH keys kept on the gateway" width="860">
+</h1>
 
-Yunmen (云门, "cloud gate") is a small self-hosted SSH gateway for one person's servers. You reach it from a browser or from the `yunmen` CLI. Target SSH keys and passwords stay on the gateway. Your laptop, a work machine, or a borrowed browser only ever hold revocable Yunmen credentials.
+Yunmen is a small self-hosted SSH gateway for one person and their own servers. Open a browser tab or run `yunmen connect` on any of your machines, and you get a real terminal on your home box, your VPS or your NAS. The SSH keys and passwords stay on the gateway. The laptop in front of you only holds a Yunmen credential that you can revoke.
 
-- **Web**: hosts, a key library (generate or import keys once, use them on many hosts), multiple terminal tabs (xterm.js), a minimal file browser with upload and download, device management, and recovery codes.
-- **CLI**: `yunmen login | hosts | connect [alias] | logout`. A full interactive PTY for vim and tmux, with no cloudflared on the client.
-- **Security**: Cloudflare Access in front, plus Yunmen's own password and TOTP. CLI devices are approved in the browser and revoked one at a time, and revocation closes their terminals. Credentials are encrypted at rest.
+I built Yunmen because I wanted my servers from anywhere: a browser on another machine, or the terminal on a work laptop. I didn't want to copy private keys to every device. A browser SSH tool covered part of that, but I kept seeing garbled characters I could never explain, and I wanted a CLI that went through the same gateway as the browser. So Yunmen does one job. It keeps a host list and the keys in one place, puts Cloudflare Access and its own password plus TOTP in front of them, and passes terminal bytes through untouched, so vim, tmux, CJK text and emoji look the way they do over plain SSH.
 
-The gateway terminates SSH, so it and Cloudflare can see terminal traffic. This is not end-to-end encryption between your device and the target.
+The name is the pinyin for 云门, "cloud gate": a single gate in the cloud, in front of your servers.
 
-## Install the CLI
+## Features
 
-Linux and macOS (amd64, arm64):
+- **Browser terminals.** Open as many tabs as you like, on one host or several. They are full PTYs, so tmux, vim, Ctrl-C and resizing behave as they do in a local terminal.
+- **A CLI for your other machines.** `yunmen connect` opens the same hosts from Linux, macOS or Windows, with a searchable host picker. It does not need cloudflared or an SSH key on the client.
+- **Keys stay home.** Generate an Ed25519 key on the gateway and paste its public line into `authorized_keys`, or import a key you already have. One key can serve many hosts. Hosts that use standard password authentication work too.
+- **Host keys checked first.** Before Yunmen sends any credential to a new host, you confirm the host's fingerprint. If that key ever changes, the connection is refused.
+- **Two locks.** In the recommended setup, Cloudflare Access protects the gateway. Yunmen then asks for its own password and a TOTP code. Recovery codes let you replace a lost authenticator.
+- **Devices you can see and revoke.** Each CLI install is approved in the browser and lasts 30 days. Revoke one device and its open terminals close right away. Your other devices keep working.
+- **Simple file access.** Browse a host's directories, then download files, or upload them with progress and cancel. An upload never overwrites an existing file.
+- **Nothing to babysit.** One small container with SQLite holds everything. Keys, passwords and the TOTP seed in it are encrypted with a master key that you keep.
+
+Yunmen does not keep shells alive by itself. When a connection drops, reconnecting starts a new shell. Run [tmux](https://github.com/tmux/tmux) or [Kiwa](https://github.com/txchen/kiwa) on the host to pick up where you left off.
+
+## How to use
+
+### 1. Run the gateway
+
+The recommended setup puts the gateway behind Cloudflare Tunnel and Cloudflare Access, with no open port at home. [docs/deployment.md](docs/deployment.md) walks through the Cloudflare side. The short version:
+
+```sh
+cd deploy
+mkdir -p secrets && chmod 700 secrets
+docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key   # keep a copy somewhere safe
+cp yunmen.env.example yunmen.env                                           # your hostname and Access details
+docker compose up -d
+docker compose run --rm -it yunmen init                                    # owner password, TOTP, recovery codes
+```
+
+You can also build the image yourself with `docker build -t ghcr.io/txchen/yunmen:latest .`.
+
+Back up the database and the master key separately. Neither works without the other. See [docs/operations.md](docs/operations.md) for backup, restore and recovery.
+
+### 2. Add your servers in the browser
+
+1. Open your Yunmen address, pass Cloudflare Access, then sign in with your password and TOTP code.
+2. Under **Keys**, generate a key and add its public line to `~/.ssh/authorized_keys` on your servers. You can also import an existing private key.
+3. Under **Hosts**, add a host: a name, a short alias for the CLI, the address, and the user. Check the host key. Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the server, then save.
+4. Press **Connect** for a terminal tab, or **Files** to browse.
+
+### 3. Install the CLI on your other machines
+
+Linux and macOS:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/txchen/yunmen/master/scripts/install.sh | sh
 ```
 
-Windows (amd64, arm64; untested), in PowerShell:
+Windows, in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/txchen/yunmen/master/scripts/install.ps1 | iex
 ```
 
-The PowerShell script installs `yunmen.exe` to `%LOCALAPPDATA%\Programs\yunmen` and adds it to your user PATH.
+Both installers check the release checksum. On Linux and macOS, `yunmen` goes to `/usr/local/bin` if that directory is writable, otherwise to `~/.local/bin`. On Windows it goes to `%LOCALAPPDATA%\Programs\yunmen`, which the installer adds to your PATH. Set `YUNMEN_VERSION` to pin a release.
 
-The script downloads the latest release from GitHub, verifies its SHA-256 checksum, and installs `yunmen` to `/usr/local/bin` if that directory is writable, otherwise to `~/.local/bin`. Set `YUNMEN_VERSION=v0.0.1` to pin a version or `YUNMEN_INSTALL_DIR` to choose the directory. Archives and `checksums.txt` are also on the [releases page](https://github.com/txchen/yunmen/releases).
-
-## Documentation
-
-- [Deployment](docs/deployment.md): Cloudflare Tunnel + Access, Compose, first-time setup.
-- [Operations](docs/operations.md): configuration, admin commands, backup and restore.
-- [API and terminal protocol](docs/api.md).
-- [Requirements](docs/requirements.md), [decisions](docs/decisions.md), [open questions](docs/open-questions.md).
-
-## Development
-
-Requires Go 1.27+ and Node 24+. The integration tests also use OpenSSH `sshd`, `sftp-server`, `tmux`, and `vim`, and skip tests that need them when they are missing.
+Then pair the machine once:
 
 ```sh
-make web            # build web/dist (embedded into the server)
-make test           # go vet, go test, web unit tests
-make e2e            # real binaries in a real PTY + headless Firefox against a local sshd
-make build          # dist/yunmen-server, dist/yunmen
-make image          # Docker image
+yunmen login https://yunmen.example.com
 ```
 
-To run locally against a loopback origin:
+It asks for this device's Cloudflare Access service token, then prints a short code. In any signed-in browser, open **Approve device**, enter the code, and confirm with your password and TOTP. The CLI stores its credentials in the OS keychain, or in an owner-only file when no keychain is available.
+
+| Command | What it does |
+| --- | --- |
+| `yunmen hosts` | List your hosts |
+| `yunmen connect home` | Open a shell on the host with alias `home` |
+| `yunmen connect` | Pick a host: type to filter, or enter a number |
+| `yunmen logout` | Revoke this device and remove its local credentials |
+
+Inside a session every key goes to the server, Ctrl-C included. Type `Enter ~ .` to disconnect from your side, as with OpenSSH.
+
+### Devices, sign-out and recovery
+
+- **Devices** lists every paired CLI with its last use and expiry. Revoking one ends its terminals immediately.
+- If you lose your authenticator, use **Lost your authenticator?** on the sign-in page with your password and one recovery code. Every session and device is signed out afterwards. **Settings** generates fresh recovery codes.
+- Without network access to the gateway, `yunmen logout` still removes the local credentials and tells you to revoke the device in the browser.
+
+### Good to know
+
+- Yunmen and Cloudflare decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
+- Yunmen is at v0.0.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
+- Anything that needs your live Cloudflare account, such as service-token claims and long sessions through Tunnel, still needs testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
+
+## How to develop
+
+You need Go 1.27+ and Node 24+. The integration tests also use OpenSSH `sshd`, `sftp-server`, `tmux` and `vim`, and are skipped when those are missing.
+
+```sh
+make web     # build the Vue app into web/dist (embedded in the server)
+make test    # go vet, go test, web unit tests
+make e2e     # real binaries in real PTYs, plus headless Firefox, against a local sshd
+make build   # dist/yunmen-server and dist/yunmen
+make image   # Docker image
+```
+
+To try the server locally without Cloudflare:
 
 ```sh
 export YUNMEN_MASTER_KEY_FILE=./data/master.key YUNMEN_DATA_DIR=./data
@@ -54,4 +113,6 @@ go run ./cmd/yunmen-server init
 YUNMEN_MODE=standalone YUNMEN_PUBLIC_ORIGIN=http://127.0.0.1:8080 go run ./cmd/yunmen-server
 ```
 
-For Web development with hot reload, run `cd web && npm run dev`. Then start the server with `YUNMEN_PUBLIC_ORIGIN=http://localhost:5173` so that the proxied `Origin` matches.
+For hot reload, run `cd web && npm run dev` and start the server with `YUNMEN_PUBLIC_ORIGIN=http://localhost:5173`. The illustration above is generated by `docs/assets/make-hero.py`.
+
+More: [API and terminal protocol](docs/api.md) · [requirements](docs/requirements.md) · [design decisions](docs/decisions.md) · [operations](docs/operations.md) · [open questions](docs/open-questions.md)
