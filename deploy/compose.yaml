@@ -1,38 +1,25 @@
-# Personal deployment: Yunmen behind Cloudflare Tunnel and Access.
-# Yunmen publishes no host port; only cloudflared reaches it on the private
-# network. Read docs/deployment.md before starting.
+# Yunmen for a Cloudflare Tunnel (or HTTPS reverse proxy) running on this host.
+# Sign-in is Yunmen's own password and TOTP. Read docs/deployment.md first.
 services:
   yunmen:
     image: ghcr.io/txchen/yunmen:latest
     restart: unless-stopped
+    # Run as your own user, set in .env, so the container can read the
+    # owner-only key file and write ./data.
+    user: "${YUNMEN_UID:?set YUNMEN_UID in .env}:${YUNMEN_GID:?set YUNMEN_GID in .env}"
     env_file: yunmen.env
     environment:
-      YUNMEN_MODE: access
+      YUNMEN_MODE: standalone
       YUNMEN_MASTER_KEY_FILE: /run/secrets/yunmen_master_key
     secrets:
       - yunmen_master_key
     volumes:
-      - yunmen-data:/data
-    networks: [internal]
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN_FILE: /run/secrets/tunnel_token
-    secrets:
-      - tunnel_token
-    networks: [internal]
+      - ./data:/data
+    # Loopback only: cloudflared on this host reaches it at
+    # http://localhost:8080 and provides HTTPS. Nothing else can connect.
+    ports:
+      - "127.0.0.1:8080:8080"
 
 secrets:
   yunmen_master_key:
     file: ./secrets/master.key
-  tunnel_token:
-    file: ./secrets/tunnel.token
-
-volumes:
-  yunmen-data:
-
-networks:
-  internal:

@@ -38,3 +38,6 @@ go.work.sum
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
+deploy/data/
+deploy/secrets/
+deploy/yunmen.env

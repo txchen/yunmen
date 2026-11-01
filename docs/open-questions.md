@@ -2,13 +2,12 @@
 
 ## Needs a real Cloudflare deployment
 
-None of these ran against Cloudflare. Tests use a local fake issuer with the claim shapes below.
+The personal deployment uses a Cloudflare Tunnel without Access (owner decision, 2026-11-01). Items 1 and 2 below matter only for the optional Access mode. None of these ran against Cloudflare. Tests use a local fake issuer with the claim shapes below.
 
 1. **Service-token claim shape.** Yunmen treats an assertion with a non-empty `common_name` and an empty `sub` as a service token whose Client ID is `common_name`. Confirm it against a real assertion: decode `Cf-Access-Jwt-Assertion` on a CLI request (`yunmen-server` logs nothing secret, so use a test origin).
 2. **Assertion expiry versus terminal lifetime.** Terminals end at the assertion's `exp`. If Cloudflare issues short-lived assertions for service tokens or browser sessions, long sessions will drop at that time. Measure the real `exp` for both, then decide whether to keep this rule or to cap only by Yunmen expiry and re-check the assertion on reconnect.
-3. **WebSocket through Access + Tunnel** without client-side cloudflared: the CLI sends `CF-Access-Client-Id`/`Secret` on the upgrade request. Verify that the upgrade passes and that idle sessions survive with 25-second pings. Also test tunnel restart and client sleep/wake.
+3. **WebSocket through the Tunnel** without client-side cloudflared: verify that browser and CLI terminals connect through the tunnel hostname and that idle sessions survive with 25-second pings. Also test tunnel restart and client sleep/wake. In Access mode, also check that the CLI's `CF-Access-Client-Id`/`Secret` headers pass on the upgrade request.
 4. **Upload sizes through Tunnel.** Chunks are 8 MiB, under the documented 100 MB request limit. Check the plan's file-traffic restrictions before relying on large transfers.
-5. **`TUNNEL_TOKEN_FILE`** in `deploy/compose.yaml` assumes a cloudflared version that reads the token from a file. If yours does not, use `TUNNEL_TOKEN` from a protected env file.
 
 ## Owner decisions (resolved)
 

@@ -14,10 +14,10 @@ These are owner-confirmed product decisions. They come from the implementation b
 
 ## Access and authentication
 
-- The personal deployment uses Cloudflare Access as an outer layer. Yunmen independently requires its own owner password and TOTP.
-- CLI clients must not require cloudflared. CLI access needs both a Cloudflare Access service token and a separate Yunmen device token. The device token is issued after browser approval with owner login and TOTP, and approval may happen on another device.
-- A service token alone never authorizes SSH access or owner settings.
-- Lifetimes: CLI device token fixed at 30 days, Web session 12 hours. Service-token expiry is configured in Cloudflare.
+- Yunmen always requires its own owner password and TOTP.
+- The personal deployment publishes Yunmen through a Cloudflare Tunnel that already runs on the host, outside Yunmen's Compose file. It does not use Cloudflare Access: password plus TOTP is the gate. (Owner decision, 2026-11-01. This replaces the earlier requirement of Cloudflare Access as an outer layer, which stays available as an optional mode.)
+- CLI clients must not require cloudflared. A CLI device needs a Yunmen device token, issued after browser approval with owner login and TOTP; approval may happen on another device. When the optional Access mode is used, the device also needs an Access service token, and a service token alone never authorizes SSH access or owner settings.
+- Lifetimes: CLI device token fixed at 30 days, Web session 12 hours.
 - The master key comes from `YUNMEN_MASTER_KEY` or `YUNMEN_MASTER_KEY_FILE`, exactly one of them.
 - The CLI stores its secrets in the OS credential store when available, with a disclosed owner-only file as the fallback. It never stores the owner password, TOTP material, or target credentials. The server stores only a hash of the device token.
 - Logout revokes the device token online and removes local credentials. If the server is unreachable, the CLI says remote revocation has not completed and points to Web. Removing the local Cloudflare secret does not revoke it in Cloudflare.

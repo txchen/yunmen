@@ -5,3 +5,5 @@ dist
 deploy/secrets
 web/node_modules
 web/dist
+deploy/data
+deploy/yunmen.env

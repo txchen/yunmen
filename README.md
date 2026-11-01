@@ -4,17 +4,17 @@
 
 Yunmen is a small self-hosted SSH gateway for one person and their own servers. Open a browser tab or run `yunmen connect` on any of your machines, and you get a real terminal on your home box, your VPS or your NAS. The SSH keys and passwords stay on the gateway. The laptop in front of you only holds a Yunmen credential that you can revoke.
 
-I built Yunmen because I wanted my servers from anywhere: a browser on another machine, or the terminal on a work laptop. I didn't want to copy private keys to every device. A browser SSH tool covered part of that, but I kept seeing garbled characters I could never explain, and I wanted a CLI that went through the same gateway as the browser. So Yunmen does one job. It keeps a host list and the keys in one place, puts Cloudflare Access and its own password plus TOTP in front of them, and passes terminal bytes through untouched, so vim, tmux, CJK text and emoji look the way they do over plain SSH.
+I built Yunmen because I wanted my servers from anywhere: a browser on another machine, or the terminal on a work laptop. I didn't want to copy private keys to every device. A browser SSH tool covered part of that, but I kept seeing garbled characters I could never explain, and I wanted a CLI that went through the same gateway as the browser. So Yunmen does one job. It keeps a host list and the keys in one place, puts a password and TOTP in front of them, and passes terminal bytes through untouched, so vim, tmux, CJK text and emoji look the way they do over plain SSH.
 
 The name is the pinyin for 云门, "cloud gate": a single gate in the cloud, in front of your servers.
 
 ## Features
 
 - **Browser terminals.** Open as many tabs as you like, on one host or several. They are full PTYs, so tmux, vim, Ctrl-C and resizing behave as they do in a local terminal.
-- **A CLI for your other machines.** `yunmen connect` opens the same hosts from Linux, macOS or Windows, with a searchable host picker. It does not need cloudflared or an SSH key on the client.
+- **A CLI for your other machines.** `yunmen connect` opens the same hosts from Linux, macOS or Windows, with a searchable host picker. It needs no SSH key and no extra software on the client.
 - **Keys stay home.** Generate an Ed25519 key on the gateway and paste its public line into `authorized_keys`, or import a key you already have. One key can serve many hosts. Hosts that use standard password authentication work too.
 - **Host keys checked first.** Before Yunmen sends any credential to a new host, you confirm the host's fingerprint. If that key ever changes, the connection is refused.
-- **Two locks.** In the recommended setup, Cloudflare Access protects the gateway. Yunmen then asks for its own password and a TOTP code. Recovery codes let you replace a lost authenticator.
+- **Password and TOTP.** Every sign-in and every new CLI device needs both. Failed attempts are rate limited, and recovery codes let you replace a lost authenticator. If you want an extra outer gate, Yunmen can also require Cloudflare Access.
 - **Devices you can see and revoke.** Each CLI install is approved in the browser and lasts 30 days. Revoke one device and its open terminals close right away. Your other devices keep working.
 - **Simple file access.** Browse a host's directories, then download files, or upload them with progress and cancel. An upload never overwrites an existing file.
 - **Nothing to babysit.** One small container with SQLite holds everything. Keys, passwords and the TOTP seed in it are encrypted with a master key that you keep.
@@ -25,24 +25,25 @@ Yunmen does not keep shells alive by itself. When a connection drops, reconnecti
 
 ### 1. Run the gateway
 
-The recommended setup puts the gateway behind Cloudflare Tunnel and Cloudflare Access, with no open port at home. [docs/deployment.md](docs/deployment.md) walks through the Cloudflare side. The short version:
+The gateway runs as one container listening on `127.0.0.1:8080`. A Cloudflare Tunnel on the same host (or any HTTPS reverse proxy) publishes it under your own hostname, with no open port at home. [docs/deployment.md](docs/deployment.md) has the details. The short version:
 
 ```sh
 cd deploy
-mkdir -p secrets && chmod 700 secrets
+mkdir -p data secrets && chmod 700 data secrets
+printf 'YUNMEN_UID=%s\nYUNMEN_GID=%s\n' "$(id -u)" "$(id -g)" > .env     # the container runs as you
 docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key   # keep a copy somewhere safe
-cp yunmen.env.example yunmen.env                                           # your hostname and Access details
+cp yunmen.env.example yunmen.env                                           # your https:// address
 docker compose up -d
 docker compose run --rm -it yunmen init                                    # owner password, TOTP, recovery codes
 ```
 
-You can also build the image yourself with `docker build -t ghcr.io/txchen/yunmen:latest .`.
+Then point your tunnel's public hostname at `http://localhost:8080`. You can also build the image yourself with `docker build -t ghcr.io/txchen/yunmen:latest .`.
 
 Back up the database and the master key separately. Neither works without the other. See [docs/operations.md](docs/operations.md) for backup, restore and recovery.
 
 ### 2. Add your servers in the browser
 
-1. Open your Yunmen address, pass Cloudflare Access, then sign in with your password and TOTP code.
+1. Open your Yunmen address and sign in with your password and TOTP code.
 2. Under **Keys**, generate a key and add its public line to `~/.ssh/authorized_keys` on your servers. You can also import an existing private key.
 3. Under **Hosts**, add a host: a name, a short alias for the CLI, the address, and the user. Check the host key. Compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the server, then save.
 4. Press **Connect** for a terminal tab, or **Files** to browse.
@@ -69,7 +70,7 @@ Then pair the machine once:
 yunmen login https://yunmen.example.com
 ```
 
-It asks for this device's Cloudflare Access service token, then prints a short code. In any signed-in browser, open **Approve device**, enter the code, and confirm with your password and TOTP. The CLI stores its credentials in the OS keychain, or in an owner-only file when no keychain is available.
+It first asks for a Cloudflare Access service token; press Enter to skip it unless your gateway uses Access. Then it prints a short code. In any signed-in browser, open **Approve device**, enter the code, and confirm with your password and TOTP. The CLI stores its credentials in the OS keychain, or in an owner-only file when no keychain is available.
 
 | Command | What it does |
 | --- | --- |
@@ -88,9 +89,10 @@ Inside a session every key goes to the server, Ctrl-C included. Type `Enter ~ .`
 
 ### Good to know
 
-- Yunmen and Cloudflare decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
+- Yunmen, and Cloudflare when you use a tunnel, decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
+- The sign-in page is reachable by anyone who knows the address. Wrong guesses are rate limited, so they cannot break in, but behind a tunnel they can briefly lock you out of signing in. See [docs/deployment.md](docs/deployment.md#exposure-without-cloudflare-access).
 - Yunmen is at v0.0.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
-- Anything that needs your live Cloudflare account, such as service-token claims and long sessions through Tunnel, still needs testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
+- Long sessions through a real Cloudflare Tunnel, and the optional Cloudflare Access mode, still need testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
 
 ## How to develop
 
