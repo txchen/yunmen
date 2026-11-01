@@ -70,7 +70,7 @@ Then pair the machine once:
 yunmen login https://yunmen.example.com
 ```
 
-It first asks for a Cloudflare Access service token; press Enter to skip it unless your gateway uses Access. Then it prints a short code. In any signed-in browser, open **Approve device**, enter the code, and confirm with your password and TOTP. The CLI stores its credentials in the OS keychain, or in an owner-only file when no keychain is available.
+It prints a short code. In any signed-in browser, open **Approve device**, enter the code, and confirm with your password and TOTP. The CLI stores its credentials in the OS keychain, or in an owner-only file when no keychain is available.
 
 | Command | What it does |
 | --- | --- |

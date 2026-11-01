@@ -121,30 +121,23 @@ func login(ctx context.Context, args []string) error {
 		DeleteLocal(old)
 	}
 
-	fmt.Fprintln(t, "Cloudflare Access service token for this device (leave empty only for a standalone gateway).")
-	id, err := prompt(t, r, "Access Client ID: ")
-	if err != nil {
-		return err
-	}
-	var secret string
-	if id != "" {
-		fmt.Fprint(t, "Access Client Secret (hidden): ")
-		b, err := term.ReadPassword(int(t.in.Fd()))
-		fmt.Fprintln(t)
-		if err != nil {
-			return err
-		}
-		secret = strings.TrimSpace(string(b))
-		if secret == "" {
-			return errors.New("client secret is required with a client ID")
-		}
-	}
 	if label == "" {
 		host, _ := os.Hostname()
 		label = "yunmen CLI on " + host
 	}
-	c := NewClient(gw, Secrets{AccessClientID: id, AccessClientSecret: secret})
+	// Only a gateway behind Cloudflare Access needs a service token; find
+	// out by trying without one first.
+	c := NewClient(gw, Secrets{})
 	start, err := c.PairStart(ctx, label)
+	if NeedsAccessToken(err) {
+		fmt.Fprintln(t, "This gateway is behind Cloudflare Access. Enter this device's Access service token.")
+		s, err := promptServiceToken(t, r)
+		if err != nil {
+			return err
+		}
+		c = NewClient(gw, s)
+		start, err = c.PairStart(ctx, label)
+	}
 	if err != nil {
 		return err
 	}
@@ -169,7 +162,8 @@ func login(ctx context.Context, args []string) error {
 		case "expired":
 			return errors.New("approval request expired; run `yunmen login` again")
 		case "approved":
-			s := Secrets{AccessClientID: id, AccessClientSecret: secret, DeviceToken: p.DeviceToken}
+			s := c.Secrets
+			s.DeviceToken = p.DeviceToken
 			where, err := SaveSecrets(gw.String(), s)
 			if err != nil {
 				return fmt.Errorf("approved, but could not store credentials: %w (revoke device %s in Web)", err, p.DeviceID)
@@ -187,6 +181,24 @@ func login(ctx context.Context, args []string) error {
 			return fmt.Errorf("unexpected approval status %q", p.Status)
 		}
 	}
+}
+
+func promptServiceToken(t *console, r *bufio.Reader) (Secrets, error) {
+	id, err := prompt(t, r, "Access Client ID: ")
+	if err != nil {
+		return Secrets{}, err
+	}
+	fmt.Fprint(t, "Access Client Secret (hidden): ")
+	b, err := term.ReadPassword(int(t.in.Fd()))
+	fmt.Fprintln(t)
+	if err != nil {
+		return Secrets{}, err
+	}
+	secret := strings.TrimSpace(string(b))
+	if id == "" || secret == "" {
+		return Secrets{}, errors.New("both the Access Client ID and Client Secret are required for this gateway")
+	}
+	return Secrets{AccessClientID: id, AccessClientSecret: secret}, nil
 }
 
 func listHosts(ctx context.Context) error {

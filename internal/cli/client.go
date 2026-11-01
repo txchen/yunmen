@@ -65,6 +65,14 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Msg }
 
+// NeedsAccessToken reports whether a request was stopped by Cloudflare
+// Access: Access redirects to its login page or Yunmen in access mode
+// answers 403. A standalone gateway never answers pairing that way.
+func NeedsAccessToken(err error) bool {
+	var e *APIError
+	return errors.As(err, &e) && (e.Status == http.StatusForbidden || e.Status >= 300 && e.Status < 400)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {

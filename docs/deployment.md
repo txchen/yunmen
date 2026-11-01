@@ -54,7 +54,7 @@ yunmen.example.com {
 - Browser: open `https://yunmen.example.com` and sign in with your password and TOTP. Under Keys, generate a key on the gateway and add its public line to `~/.ssh/authorized_keys` on your servers, or import an existing key. To add a host, check its host key and compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the target. Then pick the key and save.
 - CLI on each device:
   ```sh
-  yunmen login https://yunmen.example.com   # press Enter at "Access Client ID"; it shows a code
+  yunmen login https://yunmen.example.com   # shows a code
   # approve in any signed-in browser at /approve (password + TOTP again)
   yunmen hosts
   yunmen connect home
@@ -70,4 +70,4 @@ Without Cloudflare Access in front, anyone who can reach the hostname can reach 
 
 ## Optional: Cloudflare Access in front
 
-Yunmen can also require a Cloudflare Access assertion on every request, with CLI devices using an Access service token. Set `YUNMEN_MODE=access` and these variables (see [operations.md](operations.md)): `YUNMEN_ACCESS_TEAM_DOMAIN`, `YUNMEN_ACCESS_AUD`, `YUNMEN_ACCESS_OWNER_EMAILS`, `YUNMEN_ACCESS_SERVICE_CLIENT_IDS`. Add an Access application covering the whole tunnel hostname, with an Allow policy for you and a Service Auth policy for CLI service tokens. Publish Yunmen only through the tunnel, so that no route bypasses Access. Each CLI device then enters its service token's Client ID and Secret at `yunmen login`. This mode has not been tested against a real Cloudflare account.
+Yunmen can also require a Cloudflare Access assertion on every request, with CLI devices using an Access service token. Set `YUNMEN_MODE=access` and these variables (see [operations.md](operations.md)): `YUNMEN_ACCESS_TEAM_DOMAIN`, `YUNMEN_ACCESS_AUD`, `YUNMEN_ACCESS_OWNER_EMAILS`, `YUNMEN_ACCESS_SERVICE_CLIENT_IDS`. Add an Access application covering the whole tunnel hostname, with an Allow policy for you and a Service Auth policy for CLI service tokens. Publish Yunmen only through the tunnel, so that no route bypasses Access. `yunmen login` notices that the gateway is behind Access and asks each CLI device for its service token's Client ID and Secret. This mode has not been tested against a real Cloudflare account.

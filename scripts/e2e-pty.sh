@@ -137,13 +137,12 @@ if [ "${WEB:-}" = 1 ]; then
     node "$ROOT/scripts/e2e-web.mjs" || FAILED=1
 fi
 
-# CLI login: empty Access Client ID (standalone gateway), approve via the web API.
+# CLI login on a standalone gateway: no service token prompt; approve via the web API.
 export YUNMEN_CONFIG_DIR="$WORK/cli" YUNMEN_NO_KEYRING=1
 CLIENV="env YUNMEN_CONFIG_DIR=$YUNMEN_CONFIG_DIR YUNMEN_NO_KEYRING=1 TERM=xterm-256color"
 $T new-window -t main -n login "$CLIENV $WORK/yunmen login $ORIGIN --label e2e-laptop"
-wait_screen main:login "Access Client ID"
-$T send-keys -t main:login Enter
 wait_screen main:login "Code: "
+check "login asks for no Access service token on a standalone gateway" bash -c "! $T capture-pane -p -t main:login | grep -q 'Access'"
 CODE=$(screen main:login | sed -n 's/.*Code: *\([A-Z0-9-]*\).*/\1/p' | head -1)
 USERCODE=$CODE; fresh_code
 check "approval with password and TOTP" test "$(api -o /dev/null -w '%{http_code}' -X POST "$ORIGIN/api/v1/pairings/approve" -d "{\"userCode\":\"$USERCODE\",\"password\":\"$PASSWORD\",\"code\":\"$CODE\"}")" = 204
