@@ -5,15 +5,20 @@ import LoginView from './views/LoginView.vue'
 import WorkspaceView from './views/WorkspaceView.vue'
 import DevicesView from './views/DevicesView.vue'
 import ApproveView from './views/ApproveView.vue'
+import KeysView from './views/KeysView.vue'
+import SettingsView from './views/SettingsView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/hosts' },
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
+    { path: '/recover', name: 'recover', component: () => import('./views/RecoverView.vue'), meta: { public: true } },
     { path: '/hosts', name: 'hosts', component: WorkspaceView },
     { path: '/devices', name: 'devices', component: DevicesView },
     { path: '/approve', name: 'approve', component: ApproveView },
+    { path: '/keys', name: 'keys', component: KeysView },
+    { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/:rest(.*)*', redirect: '/hosts' },
   ],
 })

@@ -52,6 +52,7 @@ onMounted(loadHosts)
         <li v-for="h in visibleHosts" :key="h.id" class="host">
           <div class="host-name">{{ h.name || h.alias }}</div>
           <div class="muted small">{{ h.alias }} · {{ h.username }}@{{ h.address }}:{{ h.port }}</div>
+          <div v-if="h.keyLabel" class="muted small">Key: {{ h.keyLabel }}</div>
           <div class="host-actions">
             <button class="primary" @click="workspace.openTerminal(h.id)">Connect</button>
             <button @click="workspace.openFiles(h.id)">Files</button>

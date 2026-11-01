@@ -611,3 +611,87 @@ legend {
   font-size: 13px;
   color: #fff;
 }
+
+/* Keys and recovery */
+
+.inline-form {
+  display: flex;
+  gap: 4px;
+}
+
+.inline-form input {
+  min-width: 180px;
+}
+
+.table td button + button {
+  margin-left: 4px;
+}
+
+.new-key {
+  margin-top: 16px;
+  max-width: 640px;
+}
+
+.new-key textarea {
+  margin: 6px 0 10px;
+}
+
+.created {
+  margin-top: 12px;
+}
+
+.pubkey {
+  margin: 6px 0 10px;
+}
+
+.pubkey textarea {
+  width: 100%;
+  word-break: break-all;
+}
+
+.key-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.key-picker select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+
+.qr {
+  display: block;
+  margin: 0 auto 10px;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.secret {
+  font-family: "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px 16px;
+  margin-bottom: 8px;
+}
+
+.code-grid code {
+  font-size: 14px;
+  padding: 3px 6px;
+}
+
+.narrow-page .card + .card,
+.narrow-page p + .card {
+  margin-top: 12px;
+}

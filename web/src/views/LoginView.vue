@@ -57,6 +57,7 @@ async function submit() {
       </label>
       <p v-if="error" class="error">{{ error }}</p>
       <button class="primary" type="submit" :disabled="busy">{{ busy ? 'Signing in…' : 'Sign in' }}</button>
+      <p class="small"><RouterLink to="/recover">Lost your authenticator? Use a recovery code</RouterLink></p>
     </form>
   </div>
 </template>

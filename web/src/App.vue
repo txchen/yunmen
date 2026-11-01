@@ -49,8 +49,10 @@ async function retry() {
       <span class="brand">Yunmen</span>
       <nav>
         <RouterLink to="/hosts">Hosts</RouterLink>
+        <RouterLink to="/keys">Keys</RouterLink>
         <RouterLink to="/devices">Devices</RouterLink>
         <RouterLink to="/approve">Approve device</RouterLink>
+        <RouterLink to="/settings">Settings</RouterLink>
       </nav>
       <span class="spacer" />
       <span class="muted">Session expires {{ formatTime(auth.session.expiresAt) }}</span>

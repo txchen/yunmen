@@ -3,7 +3,27 @@ export type AuthKind = 'key' | 'password'
 export interface Session {
   expiresAt: string
   mode: string
+  recoveryCodesRemaining: number
 }
+
+export interface RecoveryChallenge {
+  challengeId: string
+  secret: string
+  otpauthUri: string
+  expiresAt: string
+}
+
+export interface SshKey {
+  id: string
+  label: string
+  keyType: string
+  fingerprint: string
+  publicKey: string
+  createdAt: string
+  usedBy: string[]
+}
+
+export type NewKey = { label: string; generate: true } | { label: string; privateKey: string; passphrase?: string }
 
 export interface Host {
   id: string
@@ -13,6 +33,8 @@ export interface Host {
   port: number
   username: string
   authKind: AuthKind
+  keyId?: string
+  keyLabel?: string
   keyFingerprint?: string
   hostKeyType: string
   hostKeyFingerprint: string
@@ -30,7 +52,8 @@ export interface ProbeResult {
 }
 
 export type HostAuth =
-  | { kind: 'key'; privateKey: string; passphrase?: string }
+  | { kind: 'key'; keyId: string }
+  | { kind: 'key'; privateKey: string; passphrase?: string; keyLabel?: string }
   | { kind: 'password'; password: string }
 
 export interface HostInput {
@@ -120,7 +143,7 @@ interface RequestOptions {
   body?: BodyInit
   headers?: Record<string, string>
   signal?: AbortSignal
-  // 401 on login and approval means a wrong password or code, not a lost session.
+  // 401 on login, recovery and approval means a wrong password or code, not a lost session.
   redirectOn401?: boolean
 }
 
@@ -154,6 +177,23 @@ export const api = {
   login: (password: string, code: string) =>
     request<{ expiresAt: string }>('POST', '/api/v1/auth/login', { json: { password, code }, redirectOn401: false }),
   logout: () => request<void>('POST', '/api/v1/auth/logout', { redirectOn401: false }),
+  startRecovery: (password: string, recoveryCode: string) =>
+    request<RecoveryChallenge>('POST', '/api/v1/auth/recovery/start', {
+      json: { password, recoveryCode },
+      redirectOn401: false,
+    }),
+  finishRecovery: (challengeId: string, code: string) =>
+    request<void>('POST', '/api/v1/auth/recovery/finish', { json: { challengeId, code }, redirectOn401: false }),
+  regenerateRecoveryCodes: (password: string, code: string) =>
+    request<{ codes: string[] }>('POST', '/api/v1/auth/recovery-codes', {
+      json: { password, code },
+      redirectOn401: false,
+    }),
+
+  keys: () => request<SshKey[]>('GET', '/api/v1/keys'),
+  createKey: (input: NewKey) => request<SshKey>('POST', '/api/v1/keys', { json: input }),
+  renameKey: (id: string, label: string) => request<SshKey>('PATCH', `/api/v1/keys/${enc(id)}`, { json: { label } }),
+  deleteKey: (id: string) => request<void>('DELETE', `/api/v1/keys/${enc(id)}`),
 
   hosts: () => request<Host[]>('GET', '/api/v1/hosts'),
   probe: (address: string, port: number) => request<ProbeResult>('POST', '/api/v1/hosts/probe', { json: { address, port } }),
