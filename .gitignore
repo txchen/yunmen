@@ -31,3 +31,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Yunmen
+/data/
+/dist/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
