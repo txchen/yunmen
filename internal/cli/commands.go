@@ -128,16 +128,10 @@ func login(ctx context.Context, args []string) error {
 	// Only a gateway behind Cloudflare Access needs a service token; find
 	// out by trying without one first.
 	c := NewClient(gw, Secrets{})
-	start, err := c.PairStart(ctx, label)
-	if NeedsAccessToken(err) {
+	start, err := startPairing(ctx, c, label, func() (Secrets, error) {
 		fmt.Fprintln(t, "This gateway is behind Cloudflare Access. Enter this device's Access service token.")
-		s, err := promptServiceToken(t, r)
-		if err != nil {
-			return err
-		}
-		c = NewClient(gw, s)
-		start, err = c.PairStart(ctx, label)
-	}
+		return promptServiceToken(t, r)
+	})
 	if err != nil {
 		return err
 	}
@@ -181,6 +175,20 @@ func login(ctx context.Context, args []string) error {
 			return fmt.Errorf("unexpected approval status %q", p.Status)
 		}
 	}
+}
+
+// startPairing retries an Access-protected gateway after collecting its credentials.
+func startPairing(ctx context.Context, c *Client, label string, prompt func() (Secrets, error)) (PairStart, error) {
+	start, err := c.PairStart(ctx, label)
+	if !NeedsAccessToken(err) {
+		return start, err
+	}
+	secrets, err := prompt()
+	if err != nil {
+		return PairStart{}, err
+	}
+	c.Secrets = secrets
+	return c.PairStart(ctx, label)
 }
 
 func promptServiceToken(t *console, r *bufio.Reader) (Secrets, error) {
