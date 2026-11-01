@@ -71,8 +71,9 @@ SFTP=/usr/libexec/openssh/sftp-server; [ -x "$SFTP" ] || SFTP=/usr/lib/openssh/s
 cat > "$WORK/ssh/session.sh" <<EOF
 #!/bin/sh
 case "\$SSH_ORIGINAL_COMMAND" in
-  sftp|*sftp-server) exec $SFTP ;;
-  *) cd $WORK/home; export INPUTRC=/dev/null LANG=C.UTF-8; exec bash --norc --noprofile -i ;;
+  "") cd $WORK/home; export INPUTRC=/dev/null LANG=C.UTF-8; exec bash --norc --noprofile -i ;;
+  sftp|internal-sftp) exec $SFTP ;;
+  *) exec /bin/sh -c "\$SSH_ORIGINAL_COMMAND" ;;
 esac
 EOF
 chmod 700 "$WORK/ssh/session.sh"
