@@ -16,7 +16,7 @@ export async function refreshSession(): Promise<void> {
   } catch (err) {
     auth.session = null
     if (err instanceof ApiError && err.status === 403) auth.problem = 'access'
-    else if (!(err instanceof ApiError && err.status === 401)) auth.problem = 'unreachable'
+    else auth.problem = err instanceof ApiError && err.status === 401 ? null : 'unreachable'
   }
   auth.checked = true
 }
@@ -24,4 +24,15 @@ export async function refreshSession(): Promise<void> {
 // Only same-app absolute paths are accepted, so a crafted link cannot redirect off-site.
 export function safeRedirect(value: unknown): string {
   return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : '/hosts'
+}
+
+// A failed request must not pretend that the HttpOnly session cookie was revoked.
+export async function signOut(): Promise<void> {
+  try {
+    await api.logout()
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) throw err
+  }
+  auth.session = null
+  auth.problem = null
 }

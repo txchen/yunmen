@@ -59,6 +59,7 @@ Choices made while building v1. Each one is reversible unless it says otherwise.
 - The CLI uses raw mode and restores it on every exit path, including signals and panics. Ctrl-C is sent as byte `0x03`. `Enter ~ .` disconnects locally, and `~~` sends a literal `~`. After an abnormal end the CLI turns off mouse and bracketed-paste modes and shows the cursor. It deliberately does not leave the alternate screen, so the last screen stays visible. It sends the local `$TERM` and falls back to `xterm-256color`. The browser sends `xterm-256color`.
 - **Web input encoding.** Firefox delivers non-BMP characters such as emoji as two keypress events, one per UTF-16 surrogate half, and xterm forwards each half separately. The web client holds a trailing high surrogate until its partner arrives (`web/src/terminal/encode.ts`). Before this fix, each half was encoded alone and became U+FFFD. The real-browser e2e run reproduced this. It is one concrete instance of the terminal-character class of bug.
 - Reconnecting starts a new shell and nothing is replayed. Persistence comes from remote tmux.
+- **Web workspace lifetime.** Signing out, an expired or revoked browser session (any `401`), and account recovery all discard every open tab, including the scrollback of terminals that have already ended. Those terminals end with the session anyway, and the next sign-in starts from a clean workspace. A failed sign-out request keeps the workspace, because the session cookie may still be valid.
 
 ## Files
 

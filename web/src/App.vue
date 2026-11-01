@@ -1,22 +1,47 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from './api'
-import { auth, refreshSession } from './auth'
+import { auth, refreshSession, signOut as endSession } from './auth'
 import { formatTime } from './format'
 import { workspace } from './workspace'
 
 const route = useRoute()
 const router = useRouter()
 
+const signingOut = ref(false)
+const signOutError = ref('')
+
+// Expiry, recovery and explicit logout all discard the previous workspace.
+watch(
+  () => auth.session,
+  (session) => {
+    if (!session) {
+      workspace.reset()
+      signOutError.value = ''
+    }
+  },
+  { flush: 'sync' },
+)
+
+// A sign-out error refers to the page where it happened.
+watch(
+  () => route.fullPath,
+  () => {
+    signOutError.value = ''
+  },
+)
+
 async function signOut() {
+  signingOut.value = true
+  signOutError.value = ''
   try {
-    await api.logout()
+    await endSession()
+    await router.push({ name: 'login' })
   } catch {
-    // The session is discarded locally either way.
+    signOutError.value = 'Could not sign out. Your session may still be active. Try again.'
+  } finally {
+    signingOut.value = false
   }
-  workspace.reset()
-  auth.session = null
-  await router.push({ name: 'login' })
 }
 
 function reload() {
@@ -25,7 +50,11 @@ function reload() {
 
 async function retry() {
   await refreshSession()
-  if (!auth.problem) await router.replace(route.fullPath)
+  if (!auth.problem) {
+    await router.replace(
+      auth.session || route.meta.public ? route.fullPath : { name: 'login', query: { redirect: route.fullPath } },
+    )
+  }
 }
 </script>
 
@@ -56,12 +85,13 @@ async function retry() {
       </nav>
       <span class="spacer" />
       <span class="muted">Session expires {{ formatTime(auth.session.expiresAt) }}</span>
-      <button @click="signOut">Sign out</button>
+      <button :disabled="signingOut" @click="signOut">{{ signingOut ? 'Signing out…' : 'Sign out' }}</button>
     </header>
     <main class="content">
+      <p v-if="signOutError" class="error" role="alert">{{ signOutError }}</p>
       <RouterView v-slot="{ Component }">
-        <KeepAlive include="WorkspaceView">
-          <component :is="Component" />
+        <KeepAlive :key="auth.session ? 'signed-in' : 'signed-out'" include="WorkspaceView">
+          <component :is="Component" v-if="auth.session || route.meta.public" />
         </KeepAlive>
       </RouterView>
     </main>

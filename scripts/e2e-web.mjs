@@ -1,11 +1,13 @@
 // Drives the real Web UI in headless Firefox (WebDriver BiDi) against a
 // running gateway. Invoked by scripts/e2e-pty.sh with WEB=1.
 //
-// env: ORIGIN, PASSWORD, CODE (fresh TOTP), BIDI (ws url), WORKHOME (dir to
+// env: ORIGIN, PASSWORD, CODE (fresh TOTP), SECRET, TOTP_STEP, TOTP_STEP_FILE,
+// BIDI (ws url), WORKHOME (dir to
 // upload into), UPLOAD (local file path), SHOTS (screenshot dir)
 import fs from 'node:fs'
+import { createHmac } from 'node:crypto'
 
-const { ORIGIN, PASSWORD, CODE, BIDI, WORKHOME, UPLOAD, SHOTS } = process.env
+const { ORIGIN, PASSWORD, CODE, SECRET, TOTP_STEP, TOTP_STEP_FILE, BIDI, WORKHOME, UPLOAD, SHOTS } = process.env
 const ws = new WebSocket(BIDI)
 let seq = 0
 const pending = new Map()
@@ -73,9 +75,42 @@ const ctrl = async (ch) => {
   })
 }
 
+// Generate one fresh code for the sign-out/sign-in regression, respecting the
+// server's replay protection and +/- one-step acceptance window.
+async function nextCode() {
+  if (!/^[A-Z2-7]+$/.test(SECRET ?? '') || !/^\d+$/.test(TOTP_STEP ?? '') || !TOTP_STEP_FILE) {
+    throw new Error('SECRET, TOTP_STEP and TOTP_STEP_FILE must be set (run via scripts/e2e-pty.sh with WEB=1)')
+  }
+  const step = Math.max(Math.floor(Date.now() / 30000), Number(TOTP_STEP) + 1)
+  while (step > Math.floor(Date.now() / 30000) + 1) await sleep(250)
+  const bits = [...SECRET].map((c) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(c).toString(2).padStart(5, '0')).join('')
+  const secret = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)))
+  fs.writeFileSync(TOTP_STEP_FILE, String(step))
+  const counter = Buffer.alloc(8)
+  counter.writeBigUInt64BE(BigInt(step))
+  const h = createHmac('sha1', secret).update(counter).digest()
+  return String((h.readUInt32BE(h[19] & 15) & 0x7fffffff) % 1000000).padStart(6, '0')
+}
+
 try {
+  const preload = await send('script.addPreloadScript', {
+    functionDeclaration: `() => {
+      const original = window.fetch.bind(window)
+      let failed = false
+      window.fetch = (url, opts) => {
+        if (!failed && String(url).endsWith('/auth/session')) {
+          failed = true
+          return Promise.reject(new TypeError('temporary network failure'))
+        }
+        return original(url, opts)
+      }
+    }`,
+  })
   await send('browsingContext.navigate', { context: ctx, url: ORIGIN + '/', wait: 'complete' })
-  check('login form shown without a session', await waitFor(`document.querySelector('input[type=password]')`))
+  await send('script.removePreloadScript', { script: preload.script })
+  check('initial network failure is shown', await waitFor(`document.body.innerText.includes('Cannot reach the Yunmen server')`))
+  await clickText('button', 'Retry')
+  check('retry after network recovery shows the login form', await waitFor(`document.querySelector('input[type=password]')`))
   await setInput('input[type=password]', PASSWORD)
   await setInput('input[autocomplete=one-time-code], form input:not([type=password])', CODE)
   await js(`document.querySelector('form button[type=submit]').click()`)
@@ -160,6 +195,19 @@ try {
   check('remote exit shown without clearing output', await waitFor(`document.querySelector('.term-ended') && ${termText()}.includes('after-42')`), await js(`document.querySelector('.term-ended')?.innerText`))
   check('exit status shown', await js(`document.querySelector('.term-ended').innerText.includes('4')`))
   await shot('ended')
+
+  // A failed logout must keep the current workspace and explain the failure.
+  await js(`window.__realFetch = window.fetch; window.fetch = (url, opts) => String(url).endsWith('/auth/logout') ? Promise.reject(new TypeError('offline')) : window.__realFetch(url, opts)`)
+  await clickText('button', 'Sign out')
+  check('failed sign-out preserves the session and shows an error', await waitFor(`document.querySelector('[role=alert]')?.textContent.includes('Could not sign out') && document.querySelectorAll('.tab').length >= 2`))
+  await js(`window.fetch = window.__realFetch; delete window.__realFetch`)
+  await clickText('button', 'Sign out')
+  check('sign-out reaches the login form', await waitFor(`document.querySelector('input[type=password]') && !document.querySelector('.topbar')`))
+  await setInput('input[type=password]', PASSWORD)
+  await setInput('input[autocomplete=one-time-code]', await nextCode())
+  await js(`document.querySelector('form button[type=submit]').click()`)
+  check('signing in again reloads hosts and discards old tabs', await waitFor(`[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Connect') && document.querySelectorAll('.tab').length === 0`))
+
 } catch (e) {
   check('driver', false, e.stack)
 }

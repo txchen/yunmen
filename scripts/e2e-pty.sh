@@ -133,8 +133,9 @@ if [ "${WEB:-}" = 1 ]; then
   for _ in $(seq 100); do curl -s -o /dev/null http://127.0.0.1:19333/ && break; sleep 0.2; done
   fresh_code
   mkdir -p "$WORK/shots"
-  ORIGIN=$ORIGIN PASSWORD=$PASSWORD CODE=$CODE BIDI=ws://127.0.0.1:19333/session WORKHOME=$WORK/home UPLOAD=$WORK/upload-big.bin SHOTS=$WORK/shots \
+  ORIGIN=$ORIGIN PASSWORD=$PASSWORD CODE=$CODE SECRET=$SECRET TOTP_STEP=$LAST_STEP TOTP_STEP_FILE=$WORK/web-totp-step BIDI=ws://127.0.0.1:19333/session WORKHOME=$WORK/home UPLOAD=$WORK/upload-big.bin SHOTS=$WORK/shots \
     node "$ROOT/scripts/e2e-web.mjs" || FAILED=1
+  if [ -f "$WORK/web-totp-step" ]; then LAST_STEP=$(cat "$WORK/web-totp-step"); fi
 fi
 
 # CLI login on a standalone gateway: no service token prompt; approve via the web API.

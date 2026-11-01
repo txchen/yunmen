@@ -2,7 +2,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { onUnauthorized } from './api'
 import { auth, refreshSession, safeRedirect } from './auth'
 import LoginView from './views/LoginView.vue'
-import WorkspaceView from './views/WorkspaceView.vue'
 import DevicesView from './views/DevicesView.vue'
 import ApproveView from './views/ApproveView.vue'
 import KeysView from './views/KeysView.vue'
@@ -14,7 +13,7 @@ export const router = createRouter({
     { path: '/', redirect: '/hosts' },
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
     { path: '/recover', name: 'recover', component: () => import('./views/RecoverView.vue'), meta: { public: true } },
-    { path: '/hosts', name: 'hosts', component: WorkspaceView },
+    { path: '/hosts', name: 'hosts', component: () => import('./views/WorkspaceView.vue') },
     { path: '/devices', name: 'devices', component: DevicesView },
     { path: '/approve', name: 'approve', component: ApproveView },
     { path: '/keys', name: 'keys', component: KeysView },
