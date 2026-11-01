@@ -40,45 +40,32 @@ func (s *Server) clientKey(r *http.Request) string {
 
 // verifyOwner checks password and TOTP together and consumes the TOTP step.
 // It reveals nothing about which factor failed.
-func (s *Server) verifyOwner(r *http.Request, p ownerProof) (status int, msg string) {
-	const limited = "too many failed attempts; wait a few minutes"
-	doneClient, ok := s.perClient.reserve(s.clientKey(r))
-	if !ok {
-		return http.StatusTooManyRequests, limited
-	}
-	doneGlobal, ok := s.global.reserve("owner")
-	if !ok {
-		doneClient(false)
-		return http.StatusTooManyRequests, limited
-	}
-	defer func() {
-		failed := status == http.StatusUnauthorized
-		doneClient(failed)
-		doneGlobal(failed)
-	}()
-	ctx := r.Context()
-	owner, err := s.store.Owner(ctx)
-	if err != nil {
-		s.log.Error("load owner", "err", err)
-		return http.StatusServiceUnavailable, "owner not initialized; run `yunmen-server init` on the server"
-	}
-	okPass, err := auth.VerifyPassword(owner.PasswordHash, p.Password)
-	if err != nil {
-		s.log.Error("password hash unreadable", "err", err)
-		return http.StatusInternalServerError, "internal error"
-	}
-	step, okCode := auth.MatchTOTP(owner.TOTPSecret, p.Code, s.now())
-	if !okPass || !okCode {
-		return http.StatusUnauthorized, "incorrect password or authentication code"
-	}
-	fresh, err := s.store.AcceptTOTPStep(ctx, step)
-	if err != nil {
-		return http.StatusInternalServerError, "internal error"
-	}
-	if !fresh {
-		return http.StatusUnauthorized, "authentication code already used; wait for the next code"
-	}
-	return 0, ""
+func (s *Server) verifyOwner(r *http.Request, p ownerProof) (int, string) {
+	return s.limited(r, func() (int, string) {
+		ctx := r.Context()
+		owner, err := s.store.Owner(ctx)
+		if err != nil {
+			s.log.Error("load owner", "err", err)
+			return http.StatusServiceUnavailable, "owner not initialized; run `yunmen-server init` on the server"
+		}
+		okPass, err := auth.VerifyPassword(owner.PasswordHash, p.Password)
+		if err != nil {
+			s.log.Error("password hash unreadable", "err", err)
+			return http.StatusInternalServerError, "internal error"
+		}
+		step, okCode := auth.MatchTOTP(owner.TOTPSecret, p.Code, s.now())
+		if !okPass || !okCode {
+			return http.StatusUnauthorized, "incorrect password or authentication code"
+		}
+		fresh, err := s.store.AcceptTOTPStep(ctx, step)
+		if err != nil {
+			return http.StatusInternalServerError, "internal error"
+		}
+		if !fresh {
+			return http.StatusUnauthorized, "authentication code already used; wait for the next code"
+		}
+		return 0, ""
+	})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ accessIdentity) {

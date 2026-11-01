@@ -60,7 +60,8 @@ func (r *recoveries) drop(id string) {
 
 // limited runs check under both login rate limiters. check reports failure
 // by returning http.StatusUnauthorized.
-func (s *Server) limited(r *http.Request, check func() (int, string)) (int, string) {
+// Reservations are released in a defer so a panic in check cannot leak them.
+func (s *Server) limited(r *http.Request, check func() (int, string)) (status int, text string) {
 	const msg = "too many failed attempts; wait a few minutes"
 	doneClient, ok := s.perClient.reserve(s.clientKey(r))
 	if !ok {
@@ -71,11 +72,12 @@ func (s *Server) limited(r *http.Request, check func() (int, string)) (int, stri
 		doneClient(false)
 		return http.StatusTooManyRequests, msg
 	}
-	status, text := check()
-	failed := status == http.StatusUnauthorized
-	doneClient(failed)
-	doneGlobal(failed)
-	return status, text
+	defer func() {
+		failed := status == http.StatusUnauthorized
+		doneClient(failed)
+		doneGlobal(failed)
+	}()
+	return check()
 }
 
 func (s *Server) handleRecoveryStart(w http.ResponseWriter, r *http.Request, _ accessIdentity) {
