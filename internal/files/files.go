@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"hash"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -467,7 +466,7 @@ func (s *Service) WriteChunk(id string, cred live.Credential, offset int64, sha2
 	if offset != u.written {
 		return u.written, fail(KindConflict, "unexpected chunk offset")
 	}
-	h := newHasher()
+	h := sha256.New()
 	src := &readErr{r: io.LimitReader(body, min(ChunkSize, u.size-u.written)+1)}
 	n, err := io.Copy(io.MultiWriter(u.file, h), src)
 	rollback := func(msg string) (int64, error) {
@@ -490,7 +489,7 @@ func (s *Service) WriteChunk(id string, cred live.Credential, offset int64, sha2
 	case n > ChunkSize || u.written+n > u.size:
 		s.closeLocked(u, fail(KindInvalid, "chunk exceeds the declared size"))
 		return u.written, u.result
-	case h.hex() != sha256hex:
+	case hex.EncodeToString(h.Sum(nil)) != sha256hex:
 		return rollback("chunk digest mismatch; resend it")
 	}
 	u.written += n
@@ -603,9 +602,3 @@ func (r *readErr) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-
-type hasher struct{ h hash.Hash }
-
-func newHasher() *hasher                      { return &hasher{sha256.New()} }
-func (h *hasher) Write(b []byte) (int, error) { return h.h.Write(b) }
-func (h *hasher) hex() string                 { return hex.EncodeToString(h.h.Sum(nil)) }
