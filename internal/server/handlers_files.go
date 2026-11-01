@@ -130,7 +130,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request, _ accessId
 			http.ServeFileFS(w, r, s.web, name)
 			return
 		}
-		if strings.HasPrefix(name, "assets/") {
+		// Missing files (such as /favicon.ico) are 404s; only extensionless
+		// paths are client-side routes that get index.html.
+		if strings.HasPrefix(name, "assets/") || path.Ext(name) != "" {
 			http.NotFound(w, r)
 			return
 		}

@@ -285,3 +285,13 @@ func TestParallelGuessesCannotExceedBudget(t *testing.T) {
 		t.Fatalf("%d parallel guesses were evaluated, budget is 5", n)
 	}
 }
+
+func TestStaticRoutesAndMissingFiles(t *testing.T) {
+	h := newHarness(t, ModeStandalone)
+	b := h.browser()
+	for path, want := range map[string]int{"/": 200, "/keys": 200, "/approve": 200, "/favicon.ico": 404, "/assets/missing.js": 404} {
+		if st, _ := b.raw("GET", path, nil); st != want {
+			t.Errorf("GET %s: %d, want %d", path, st, want)
+		}
+	}
+}
