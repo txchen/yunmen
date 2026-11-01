@@ -129,7 +129,8 @@ check "host saved after authenticated test" grep -q "sftpAvailable.:true" <<<"$C
 
 if [ "${WEB:-}" = 1 ]; then
   head -c 20000000 /dev/urandom > "$WORK/upload-big.bin"
-  firefox --headless --no-remote --profile "$(mktemp -d "$WORK/ff.XXXX")" --remote-debugging-port 19333 >/dev/null 2>&1 & PIDS+=($!)
+  # Firefox 158 requires -remote-allow-system-access for browsingContext.setViewport.
+  firefox --headless --no-remote -remote-allow-system-access --profile "$(mktemp -d "$WORK/ff.XXXX")" --remote-debugging-port 19333 >/dev/null 2>&1 & PIDS+=($!)
   for _ in $(seq 100); do curl -s -o /dev/null http://127.0.0.1:19333/ && break; sleep 0.2; done
   fresh_code
   mkdir -p "$WORK/shots"
