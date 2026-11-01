@@ -23,6 +23,7 @@ Run them where the database and key are available, for example `docker compose r
 - `init` creates the owner and enrolls TOTP. It runs once.
 - `reset-password` and `reset-totp` are local recovery. They revoke all sessions and devices.
 - `revoke-all` revokes every session and device without changing secrets.
+- `recovery-codes` replaces the owner's 10 recovery codes and prints them. `init` also prints the first set.
 - `genkey` prints a new master key. Never use it to replace the key of an existing database.
 
 After `reset-*` or `revoke-all`, a running server closes the affected terminals within about 15 seconds.

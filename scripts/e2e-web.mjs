@@ -149,6 +149,11 @@ try {
   check('download link returns the file', dl === fs.statSync(UPLOAD).size, `${dl}`)
   await shot('files')
 
+  await clickText('a', 'Keys')
+  check('key library lists the imported host key and where it is used', await waitFor(`document.body.innerText.includes('box key') && document.body.innerText.includes('SHA256:')`), await js(`document.body.innerText.slice(0, 400)`))
+  await clickText('a', 'Hosts')
+  check('terminal tabs survive visiting another page', await waitFor(`document.querySelectorAll('.tab').length >= 2`))
+
   await js(`document.querySelectorAll('.tab')[0].click()`)
   await sleep(300)
   await keys('exit 4' + ENTER)

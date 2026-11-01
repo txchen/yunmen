@@ -10,13 +10,13 @@ None of these ran against Cloudflare. Tests use a local fake issuer with the cla
 4. **Upload sizes through Tunnel.** Chunks are 8 MiB, under the documented 100 MB request limit. Check the plan's file-traffic restrictions before relying on large transfers.
 5. **`TUNNEL_TOKEN_FILE`** in `deploy/compose.yaml` assumes a cloudflared version that reads the token from a file. If yours does not, use `TUNNEL_TOKEN` from a protected env file.
 
-## Owner input wanted
+## Owner decisions (resolved)
 
-1. **Windows CLI.** It compiles, but it is not released or tested. Should it be in scope?
-2. **Key library.** Credentials are per host now. Should one key be reusable across hosts, as the design proposed?
-3. **Recovery codes.** v1 recovery needs shell access to the server. Is that acceptable, or do you want one-time recovery codes?
-4. **Upload limits.** No maximum file size is enforced beyond what the target and Cloudflare allow. Pick a cap if you want one.
-5. **Is reconnect + `tmux attach` enough** for v1, instead of gateway-side session resumption? This is implemented as the design's default.
+- Windows CLI: released, but untested; the owner has no Windows machine.
+- Key library: adopted.
+- Recovery codes: adopted.
+- Upload size: no limit.
+- Session persistence: reconnect plus tmux (or a similar tool) on the target.
 
 ## Known limitations
 
@@ -30,4 +30,5 @@ None of these ran against Cloudflare. Tests use a local fake issuer with the cla
 - The HTTP server has no overall read timeout, since long downloads and uploads need one. A stalled chunk body holds only its own upload.
 - Downloads are not snapshots. A file that changes on the target while it is being read is streamed as it changes.
 - Rate limiting is kept in memory, so a restart resets it.
+- Windows, macOS and arm64 CLI builds have never been run.
 - `go test -race` needs cgo. It was run in a Debian Go container, not on the development host.

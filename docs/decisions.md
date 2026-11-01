@@ -21,7 +21,7 @@ Choices made while building v1. Each one is reversible unless it says otherwise.
 | Item | Supported in v1 | Not supported |
 | --- | --- | --- |
 | Server | Linux amd64/arm64 container; any Linux host for the binary | |
-| CLI | Linux and macOS, amd64 and arm64 (release builds) | Windows: compiles, but raw console, resize polling and keyring are untested, so no release artifact |
+| CLI | Linux, macOS and Windows, amd64 and arm64 (release builds). Linux amd64 is tested; macOS, Windows and arm64 are built but untested | |
 | Browsers | Current Firefox and Chromium-based browsers (Firefox tested headless) | Safari untested |
 | Target key formats | OpenSSH, PKCS#1, SEC1, PKCS#8 PEM; Ed25519, ECDSA (P-256/384/521), RSA ≥ 2048; passphrase-protected keys (the passphrase is used once at import and discarded) | DSA, RSA < 2048, FIDO/`sk-` keys, PuTTY `.ppk`, OpenSSH certificates |
 | Target auth | `publickey` and standard `password` | `keyboard-interactive`, target-side MFA, agent forwarding |
@@ -44,7 +44,8 @@ Choices made while building v1. Each one is reversible unless it says otherwise.
 - Create and update test SSH authentication with the observed key pinned before anything is saved, and report whether SFTP is available.
 - Connections restrict `HostKeyAlgorithms` to the pinned key type and compare the full key bytes. RSA host keys must sign with SHA-2, so OpenSSH older than 7.2 cannot be used with an RSA host key. A mismatch is reported as `host_key_changed` before any credential is sent.
 - Changing address or port requires a new observation. Username or credential changes keep the pin.
-- **Simplification versus the design.** Credentials are stored per host. There is no shared key library: reusing a key means pasting it into each host.
+- **Key library.** Private keys live in a library (`ssh_keys`) and hosts reference one key, so one key serves many hosts. A key can be generated on the gateway (Ed25519), in which case only its public line is ever shown, or imported. Importing a key that is already in the library reuses the existing entry. Deleting a key is refused while hosts use it. Deleting it also ends terminals and transfers that are still running with it. Each session records the key it authenticated with in the live registry for that purpose. Passwords stay owned by their host.
+- Schema 2 moves every host-owned key from schema 1 into the library, deduplicated by fingerprint. The move runs inside the migration transaction.
 
 ## Terminal
 
@@ -75,15 +76,19 @@ Choices made while building v1. Each one is reversible unless it says otherwise.
 
 ## Recovery
 
-- No recovery codes in v1. Recovery is local: `yunmen-server reset-password`, `reset-totp`, and `revoke-all` run on the server and revoke every session and device. A running server closes the affected terminals within about 15 seconds.
+- **Recovery codes.** `init` prints 10 one-time codes (`XXXXX-XXXXX`, 50 bits each, stored as SHA-256 hashes). On the Web, password plus a recovery code starts the replacement of the authenticator. The code is used up only once the new authenticator confirms a code, in the same transaction that replaces the TOTP secret and revokes every session and device. A recovery code never signs in by itself. Codes can be regenerated in Settings (password and TOTP) or with `yunmen-server recovery-codes`.
+- Local recovery also remains: `yunmen-server reset-password`, `reset-totp`, and `revoke-all` run on the server and revoke every session and device. A running server closes the affected terminals within about 15 seconds.
+- **Windows CLI.** Prompts use `CONIN$`/`CONOUT$` in place of `/dev/tty`. The console gets VT input (from `x/term` raw mode) and VT output processing with `DISABLE_NEWLINE_AUTO_RETURN`, so bytes are interpreted as sent, and the mode is restored on exit. Resize is detected by polling every 250 ms. Secrets use the Windows Credential Manager. `scripts/install.ps1` installs to `%LOCALAPPDATA%\Programs\yunmen` and adds it to the user PATH. The PowerShell script was tested with PowerShell 7 in a Linux container; the Windows binaries have never run.
+- **No upload size limit**, by owner decision. Transfers are limited only by the target and by Cloudflare.
+- **Session persistence is the remote multiplexer's job**, by owner decision: tmux or a similar tool on the target. The gateway never keeps or resumes a shell.
 
 ## Reconciliation with the original design
 
 | Design proposal | v1 | Reason |
 | --- | --- | --- |
 | Password, then a separate MFA challenge | One request with both factors | Removes a partially authenticated state. Same security. |
-| Recovery codes | Local admin reset only | Smaller surface for a single owner who has server access. |
+| Recovery codes | Recovery codes plus local admin reset | Adopted in v0.0.2 at the owner's request. |
 | Five-minute reauthentication for sensitive actions | Fresh password and TOTP on every device approval; host edits use the session | Device approval is the step that grants new access. |
-| Reusable key records and key import | Credentials stored per host | Smaller model. A key library can come later. |
+| Reusable key records and key import | Key library with generate and import | Adopted in v0.0.2 at the owner's request. |
 | OpenAPI-generated clients | Hand-written `docs/api.md`, Go and TS mirrors | Small API. Generation was not worth the toolchain yet. |
 | Persisted upload idempotency and commit records | In-memory results for 10 minutes plus a cleanup ledger | Restart does not resume uploads in v1, as the design allows. |

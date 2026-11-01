@@ -2,7 +2,7 @@
 
 Yunmen (云门, "cloud gate") is a small self-hosted SSH gateway for one person's servers. You reach it from a browser or from the `yunmen` CLI. Target SSH keys and passwords stay on the gateway. Your laptop, a work machine, or a borrowed browser only ever hold revocable Yunmen credentials.
 
-- **Web**: hosts, multiple terminal tabs (xterm.js), a minimal file browser with upload and download, and device management.
+- **Web**: hosts, a key library (generate or import keys once, use them on many hosts), multiple terminal tabs (xterm.js), a minimal file browser with upload and download, device management, and recovery codes.
 - **CLI**: `yunmen login | hosts | connect [alias] | logout`. A full interactive PTY for vim and tmux, with no cloudflared on the client.
 - **Security**: Cloudflare Access in front, plus Yunmen's own password and TOTP. CLI devices are approved in the browser and revoked one at a time, and revocation closes their terminals. Credentials are encrypted at rest.
 
@@ -15,6 +15,14 @@ Linux and macOS (amd64, arm64):
 ```sh
 curl -fsSL https://raw.githubusercontent.com/txchen/yunmen/master/scripts/install.sh | sh
 ```
+
+Windows (amd64, arm64; untested), in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/txchen/yunmen/master/scripts/install.ps1 | iex
+```
+
+The PowerShell script installs `yunmen.exe` to `%LOCALAPPDATA%\Programs\yunmen` and adds it to your user PATH.
 
 The script downloads the latest release from GitHub, verifies its SHA-256 checksum, and installs `yunmen` to `/usr/local/bin` if that directory is writable, otherwise to `~/.local/bin`. Set `YUNMEN_VERSION=v0.0.1` to pin a version or `YUNMEN_INSTALL_DIR` to choose the directory. Archives and `checksums.txt` are also on the [releases page](https://github.com/txchen/yunmen/releases).
 

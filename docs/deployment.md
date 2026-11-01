@@ -27,7 +27,7 @@ docker compose up -d
 docker compose run --rm -it yunmen init     # owner password + TOTP enrollment, local only
 ```
 
-`init` refuses to run twice. There is no web registration and no bootstrap route.
+`init` refuses to run twice. There is no web registration and no bootstrap route. Write down the 10 recovery codes it prints. With your password, any one of them lets you replace a lost authenticator from the sign-in page.
 
 Instead of the key file you may set `YUNMEN_MASTER_KEY` in the environment. Configure exactly one of the two. The server refuses to start when the key is missing, malformed, set twice, or different from the key the database was created with.
 
@@ -35,7 +35,7 @@ The container has to reach your target hosts. If they are only on the host's LAN
 
 ## 3. Use it
 
-- Browser: open `https://yunmen.example.com`, pass Access, then sign in with your password and TOTP. To add a host, check its host key and compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the target. Then save.
+- Browser: open `https://yunmen.example.com`, pass Access, then sign in with your password and TOTP. Under Keys, generate a key on the gateway and add its public line to `~/.ssh/authorized_keys` on your servers, or import an existing key. To add a host, check its host key and compare the fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the target. Then pick the key and save.
 - CLI on each device:
   ```sh
   yunmen login https://yunmen.example.com   # prompts for the service token, shows a code
@@ -43,7 +43,7 @@ The container has to reach your target hosts. If they are only on the host's LAN
   yunmen hosts
   yunmen connect home
   ```
-  On the remote host, run `tmux new -A -s main` so a dropped connection never loses work.
+  On the remote host, run `tmux new -A -s main` (or a similar tool) so a dropped connection never loses work. Yunmen does not keep shells alive itself.
 
 ## Standalone mode (no Cloudflare)
 
