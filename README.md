@@ -29,10 +29,11 @@ The gateway runs as one container listening on `127.0.0.1:8080`. A Cloudflare Tu
 
 ```sh
 cd deploy
-mkdir -p data secrets && chmod 700 data secrets
+mkdir -p data secrets
 docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key   # keep a copy somewhere safe
-chmod 600 secrets/master.key
-# in compose.yaml, set YUNMEN_PUBLIC_ORIGIN to your https:// address and user: to $(id -u):$(id -g)
+chown -R 1000:1000 data secrets                                            # the user: in compose.yaml
+chmod 700 data secrets && chmod 600 secrets/master.key
+# in compose.yaml, set YUNMEN_PUBLIC_ORIGIN to your https:// address
 docker compose up -d
 docker compose run --rm -it yunmen init                                    # owner password, TOTP, recovery codes
 ```

@@ -4,8 +4,9 @@ services:
   yunmen:
     image: ghcr.io/txchen/yunmen:latest
     restart: unless-stopped
-    # Your own user (`id -u`:`id -g`), so the container can read the
-    # owner-only key file and write ./data.
+    # The container runs as this uid:gid. ./data and ./secrets must belong
+    # to it (chown -R 1000:1000 data secrets), so it can read the owner-only
+    # key file and write the database. It needs no account on the host.
     user: "1000:1000"
     environment:
       YUNMEN_MODE: standalone

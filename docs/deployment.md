@@ -8,16 +8,16 @@ Yunmen serves plain HTTP on `127.0.0.1:8080`; the tunnel provides HTTPS. Browser
 
 ```sh
 cd deploy
-mkdir -p data secrets && chmod 700 data secrets
+mkdir -p data secrets
 docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key
-chmod 600 secrets/master.key
-# Edit compose.yaml: set YUNMEN_PUBLIC_ORIGIN to your https:// address, and
-# `user:` to the output of `echo "$(id -u):$(id -g)"` if it is not 1000:1000.
+chown -R 1000:1000 data secrets             # the uid:gid in compose.yaml's `user:`
+chmod 700 data secrets && chmod 600 secrets/master.key
+# Edit compose.yaml: set YUNMEN_PUBLIC_ORIGIN to your https:// address.
 docker compose up -d
 docker compose run --rm -it yunmen init     # owner password + TOTP enrollment, local only
 ```
 
-The container runs as your own user, so it can read the owner-only key file. The database lives in `deploy/data`.
+The container runs as the uid:gid in `user:` (1000:1000 by default), so `data` and `secrets` must belong to it, whether you run these commands as root or as yourself. That uid needs no account on the host. Without a `user:` line the image runs as its built-in `nonroot` user, uid and gid 65532, so use `chown -R 65532:65532 data secrets` instead. If the server logs `permission denied` for the key file or the database, the ownership does not match `user:`; run the `chown` again and `docker compose up -d --force-recreate`. The database lives in `deploy/data`.
 
 `init` refuses to run twice. There is no web registration and no bootstrap route. Write down the 10 recovery codes it prints. With your password, any one of them lets you replace a lost authenticator from the sign-in page.
 
