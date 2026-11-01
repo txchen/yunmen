@@ -4,13 +4,17 @@ services:
   yunmen:
     image: ghcr.io/txchen/yunmen:latest
     restart: unless-stopped
-    # Run as your own user, set in .env, so the container can read the
+    # Your own user (`id -u`:`id -g`), so the container can read the
     # owner-only key file and write ./data.
-    user: "${YUNMEN_UID:?set YUNMEN_UID in .env}:${YUNMEN_GID:?set YUNMEN_GID in .env}"
-    env_file: yunmen.env
+    user: "1000:1000"
     environment:
       YUNMEN_MODE: standalone
+      # The exact https:// address you open in the browser.
+      YUNMEN_PUBLIC_ORIGIN: https://yunmen.example.com
       YUNMEN_MASTER_KEY_FILE: /run/secrets/yunmen_master_key
+      # Rate limit sign-in per visitor, using the address Cloudflare reports.
+      # Safe only because the port below is reachable from this host alone.
+      YUNMEN_CLIENT_IP_HEADER: Cf-Connecting-IP
     secrets:
       - yunmen_master_key
     volumes:

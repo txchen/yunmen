@@ -30,9 +30,9 @@ The gateway runs as one container listening on `127.0.0.1:8080`. A Cloudflare Tu
 ```sh
 cd deploy
 mkdir -p data secrets && chmod 700 data secrets
-printf 'YUNMEN_UID=%s\nYUNMEN_GID=%s\n' "$(id -u)" "$(id -g)" > .env     # the container runs as you
 docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key   # keep a copy somewhere safe
-cp yunmen.env.example yunmen.env                                           # your https:// address
+chmod 600 secrets/master.key
+# in compose.yaml, set YUNMEN_PUBLIC_ORIGIN to your https:// address and user: to $(id -u):$(id -g)
 docker compose up -d
 docker compose run --rm -it yunmen init                                    # owner password, TOTP, recovery codes
 ```
@@ -90,7 +90,7 @@ Inside a session every key goes to the server, Ctrl-C included. Type `Enter ~ .`
 ### Good to know
 
 - Yunmen, and Cloudflare when you use a tunnel, decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
-- The sign-in page is reachable by anyone who knows the address. Wrong guesses are rate limited, so they cannot break in, but behind a tunnel they can briefly lock you out of signing in. See [docs/deployment.md](docs/deployment.md#exposure-without-cloudflare-access).
+- The sign-in page is reachable by anyone who knows the address. Wrong guesses are rate limited per visitor and in total, so they cannot break in, but a determined attacker can briefly lock you out of signing in. See [docs/deployment.md](docs/deployment.md#exposure-without-cloudflare-access).
 - Yunmen is at v0.0.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
 - Long sessions through a real Cloudflare Tunnel, and the optional Cloudflare Access mode, still need testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
 

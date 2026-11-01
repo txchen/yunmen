@@ -9,15 +9,15 @@ Yunmen serves plain HTTP on `127.0.0.1:8080`; the tunnel provides HTTPS. Browser
 ```sh
 cd deploy
 mkdir -p data secrets && chmod 700 data secrets
-printf 'YUNMEN_UID=%s\nYUNMEN_GID=%s\n' "$(id -u)" "$(id -g)" > .env   # the container runs as you
 docker run --rm ghcr.io/txchen/yunmen:latest genkey > secrets/master.key
 chmod 600 secrets/master.key
-cp yunmen.env.example yunmen.env            # set YUNMEN_PUBLIC_ORIGIN to your https:// address
+# Edit compose.yaml: set YUNMEN_PUBLIC_ORIGIN to your https:// address, and
+# `user:` to the output of `echo "$(id -u):$(id -g)"` if it is not 1000:1000.
 docker compose up -d
 docker compose run --rm -it yunmen init     # owner password + TOTP enrollment, local only
 ```
 
-The container runs as your own user (from `.env`), so it can read the owner-only key file. The database lives in `deploy/data`.
+The container runs as your own user, so it can read the owner-only key file. The database lives in `deploy/data`.
 
 `init` refuses to run twice. There is no web registration and no bootstrap route. Write down the 10 recovery codes it prints. With your password, any one of them lets you replace a lost authenticator from the sign-in page.
 
@@ -37,7 +37,7 @@ ingress:
   - service: http_status:404
 ```
 
-Then restart cloudflared. Set `YUNMEN_PUBLIC_ORIGIN=https://yunmen.example.com` in `yunmen.env` to match.
+Then restart cloudflared. `YUNMEN_PUBLIC_ORIGIN` in `compose.yaml` must match, here `https://yunmen.example.com`.
 
 The Compose file publishes Yunmen on `127.0.0.1:8080` only, so the tunnel is the only way in from outside. Uploads go in 8 MiB chunks, well under Cloudflare's per-request limit.
 
@@ -65,7 +65,7 @@ yunmen.example.com {
 
 Without Cloudflare Access in front, anyone who can reach the hostname can reach the sign-in page. Yunmen still requires the password and a TOTP code for everything, and it limits failed attempts. Known consequences:
 
-- The failed-attempt limit is kept per client address. Through the tunnel every request comes from cloudflared's address, so the limit acts as one shared budget. Someone guessing passwords can keep you locked out of sign-in for minutes at a time, though not break in.
+- Failed attempts are limited to 5 per 5 minutes per visitor and 20 per 5 minutes in total. Through the tunnel every request comes from cloudflared's address, so the Compose file sets `YUNMEN_CLIENT_IP_HEADER: Cf-Connecting-IP` to count each visitor by the address Cloudflare reports. That is safe because Yunmen listens on `127.0.0.1` and only cloudflared can reach it. Without the setting, every visitor shares one budget, and someone guessing passwords could keep you locked out of sign-in for minutes at a time. Even with it, an attacker spread over many addresses can use up the total budget for a while, though not break in.
 - Anyone can start CLI pairing requests, which expire after 5 minutes unapproved. At most 10 can be pending at once.
 
 ## Optional: Cloudflare Access in front
