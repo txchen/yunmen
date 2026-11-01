@@ -24,7 +24,9 @@ jobs:
       - run: cd web && npm ci && npm run build && npm test
       - run: go vet ./...
       - run: go test -race ./...
-      - run: scripts/e2e-pty.sh
+      # ubuntu-latest ships Firefox; fail early with a clear message if it ever stops.
+      - run: firefox --version
+      - run: WEB=1 scripts/e2e-pty.sh
 
   image:
     runs-on: ubuntu-latest
