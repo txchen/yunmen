@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ type term struct {
 	ready protocol.Control
 	// inputAcked is the server's cumulative input ack, updated while reading.
 	inputAcked atomic.Int64
+
+	mu         sync.Mutex // guards out, acked, end, closed once the reader runs
+	closed     bool
+	readerOnce sync.Once
+	notify     chan struct{}
 }
 
 func (c *client) wsHeaders() http.Header {
@@ -107,37 +113,83 @@ func (tm *term) consume(data []byte) {
 	tm.control(protocol.Control{Type: protocol.TypeAck, Bytes: tm.acked})
 }
 
-// readUntil reads until pred holds over all output so far, or the terminal ends.
+// startReader reads the socket in one goroutine for the rest of the test.
+// coder/websocket closes the connection when a Read context expires, so
+// waits must poll this reader instead of reading with a timeout.
+func (tm *term) startReader() {
+	tm.readerOnce.Do(func() {
+		tm.notify = make(chan struct{}, 1)
+		go func() {
+			for {
+				typ, data, err := tm.conn.Read(context.Background())
+				tm.mu.Lock()
+				switch {
+				case err != nil:
+					tm.closed = true
+				case typ == websocket.MessageBinary:
+					tm.consume(data)
+				default:
+					ctl, _ := protocol.ParseServer(data)
+					switch ctl.Type {
+					case protocol.TypeEnd:
+						tm.end = &ctl
+					case protocol.TypeAck:
+						tm.inputAcked.Store(ctl.Bytes)
+					}
+				}
+				tm.mu.Unlock()
+				select {
+				case tm.notify <- struct{}{}:
+				default:
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	})
+}
+
+// output returns a copy of all terminal output received so far.
+func (tm *term) output() []byte {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return bytes.Clone(tm.out.Bytes())
+}
+
+// readUntil waits until pred holds over all output so far, or the terminal
+// ends or the timeout passes. The connection stays open either way.
 func (tm *term) readUntil(timeout time.Duration, pred func([]byte) bool) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	for !pred(tm.out.Bytes()) {
-		if tm.end != nil {
+	tm.startReader()
+	deadline := time.After(timeout)
+	for {
+		tm.mu.Lock()
+		ok, done := pred(tm.out.Bytes()), tm.end != nil || tm.closed
+		tm.mu.Unlock()
+		if ok {
+			return true
+		}
+		if done {
 			return false
 		}
-		typ, data, err := tm.conn.Read(ctx)
-		if err != nil {
+		select {
+		case <-tm.notify:
+		case <-deadline:
 			return false
-		}
-		if typ == websocket.MessageBinary {
-			tm.consume(data)
-			continue
-		}
-		ctl, _ := protocol.ParseServer(data)
-		switch ctl.Type {
-		case protocol.TypeEnd:
-			tm.end = &ctl
-		case protocol.TypeAck:
-			tm.inputAcked.Store(ctl.Bytes)
 		}
 	}
-	return true
+}
+
+func (tm *term) endState() *protocol.Control {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return tm.end
 }
 
 func (tm *term) expect(s string) {
 	tm.t.Helper()
 	if !tm.readUntil(15*time.Second, func(b []byte) bool { return bytes.Contains(b, []byte(s)) }) {
-		tm.t.Fatalf("did not see %q; end=%+v; output tail: %q", s, tm.end, tail(tm.out.String()))
+		tm.t.Fatalf("did not see %q; end=%+v; output tail: %q", s, tm.endState(), tail(string(tm.output())))
 	}
 }
 
@@ -145,10 +197,11 @@ func (tm *term) expect(s string) {
 func (tm *term) waitEnd(timeout time.Duration) protocol.Control {
 	tm.t.Helper()
 	tm.readUntil(timeout, func([]byte) bool { return false })
-	if tm.end == nil {
-		tm.t.Fatalf("terminal did not end; output tail: %q", tail(tm.out.String()))
+	end := tm.endState()
+	if end == nil {
+		tm.t.Fatalf("terminal did not end; output tail: %q", tail(string(tm.output())))
 	}
-	return *tm.end
+	return *end
 }
 
 func tail(s string) string {

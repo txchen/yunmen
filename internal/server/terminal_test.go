@@ -49,7 +49,7 @@ func TestTerminalUnicodeResizeCtrlCAndExit(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	tm.send([]byte("echo after-$((40+2))\r"))
 	tm.expect("after-42")
-	if strings.Contains(tm.out.String(), "\nslept") {
+	if strings.Contains(string(tm.output()), "\nslept") {
 		t.Fatal("Ctrl-C did not interrupt the remote program")
 	}
 
@@ -79,10 +79,10 @@ func TestTerminalPreservesArbitraryBytes(t *testing.T) {
 				payload[i%size] = byte(i)
 			}
 		}
-		start := tm.out.Len()
+		start := len(tm.output())
 		go tm.sendAsync(payload)
 		ok := tm.readUntil(60*time.Second, func(b []byte) bool { return len(b)-start >= size })
-		got := tm.out.Bytes()[start:]
+		got := tm.output()[start:]
 		if !ok || !bytes.Equal(got[:size], payload) {
 			t.Fatalf("size %d: bytes differ (got %d bytes, first diff at %d) got=%q want=%q", size, len(got), firstDiff(got, payload), got[:min(len(got), 40)], payload[:min(size, 40)])
 		}
@@ -135,9 +135,16 @@ func TestVimAndTmuxRun(t *testing.T) {
 	tm2 := owner.openTerm(id)
 	tm2.send([]byte("tmux -S " + sock + " -f /dev/null attach -t main\r"))
 	tm2.expect("in-42")
-	tm2.send([]byte{0x02})
-	time.Sleep(200 * time.Millisecond)
-	tm2.send([]byte("d"))
+	// A freshly attached tmux client may not treat the prefix as a prefix
+	// until its startup finishes (seen on Ubuntu runners), so retry.
+	detached := func(b []byte) bool { return bytes.Contains(b, []byte("detached")) }
+	for try := 0; try < 5 && !detached(tm2.output()); try++ {
+		time.Sleep(500 * time.Millisecond)
+		tm2.send([]byte{0x02})
+		time.Sleep(200 * time.Millisecond)
+		tm2.send([]byte("d"))
+		tm2.readUntil(2*time.Second, detached)
+	}
 	tm2.expect("detached")
 	tm2.send([]byte("tmux -S " + sock + " kill-server; exit\r"))
 	tm2.waitEnd(10 * time.Second)
