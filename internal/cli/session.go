@@ -331,8 +331,14 @@ func Interactive(ctx context.Context, conn *websocket.Conn, hostID string) (o Ou
 		conn.CloseNow()
 		return Outcome{}, fmt.Errorf("cannot enter raw mode: %w", err)
 	}
+	restoreOutput := prepareOutput(os.Stdout)
 	var restoreOnce sync.Once
-	restore := func() { restoreOnce.Do(func() { term.Restore(inFd, state) }) }
+	restore := func() {
+		restoreOnce.Do(func() {
+			term.Restore(inFd, state)
+			restoreOutput()
+		})
+	}
 	defer restore()
 	defer func() {
 		if p := recover(); p != nil {

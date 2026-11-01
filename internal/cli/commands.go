@@ -77,7 +77,7 @@ func loggedIn() (Config, *Client, error) {
 	return cfg, NewClient(gw, s), nil
 }
 
-func prompt(t *os.File, r *bufio.Reader, label string) (string, error) {
+func prompt(t *console, r *bufio.Reader, label string) (string, error) {
 	fmt.Fprint(t, label)
 	line, err := r.ReadString('\n')
 	return strings.TrimSpace(line), err
@@ -103,12 +103,12 @@ func login(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	t, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	t, err := openConsole()
 	if err != nil {
 		return errors.New("login needs an interactive terminal for the hidden secret prompt")
 	}
 	defer t.Close()
-	r := bufio.NewReader(t)
+	r := bufio.NewReader(t.in)
 
 	if old, err := LoadConfig(); err == nil {
 		if _, c, err := loggedIn(); err == nil {
@@ -129,7 +129,7 @@ func login(ctx context.Context, args []string) error {
 	var secret string
 	if id != "" {
 		fmt.Fprint(t, "Access Client Secret (hidden): ")
-		b, err := term.ReadPassword(int(t.Fd()))
+		b, err := term.ReadPassword(int(t.in.Fd()))
 		fmt.Fprintln(t)
 		if err != nil {
 			return err
