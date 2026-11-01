@@ -105,5 +105,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, o ownerCtx
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request, o ownerCtx) {
-	writeJSON(w, http.StatusOK, map[string]any{"expiresAt": o.session.ExpiresAt, "mode": s.cfg.Mode})
+	remaining, err := s.store.RecoveryCodesRemaining(r.Context())
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"expiresAt": o.session.ExpiresAt, "mode": s.cfg.Mode, "recoveryCodesRemaining": remaining})
 }

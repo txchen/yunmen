@@ -23,9 +23,19 @@ type Store struct {
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
-// migrations are append-only. Never edit an applied migration.
-var migrations = []string{
-	`CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+// migration is one schema version. Steps run in order inside one
+// transaction. Migrations are append-only: never edit an applied one.
+type migration []func(ctx context.Context, tx *sql.Tx, s *Store) error
+
+func sqlStep(q string) func(context.Context, *sql.Tx, *Store) error {
+	return func(ctx context.Context, tx *sql.Tx, _ *Store) error {
+		_, err := tx.ExecContext(ctx, q)
+		return err
+	}
+}
+
+var migrations = []migration{
+	{sqlStep(`CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
 	CREATE TABLE owner (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		password_hash TEXT NOT NULL,
@@ -71,7 +81,71 @@ var migrations = []string{
 		host_id TEXT NOT NULL,
 		temp_path TEXT NOT NULL,
 		created_at INTEGER NOT NULL
-	);`,
+	);`)},
+	{
+		sqlStep(`CREATE TABLE ssh_keys (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			key_type TEXT NOT NULL,
+			fingerprint TEXT NOT NULL UNIQUE,
+			public_key TEXT NOT NULL,
+			secret BLOB NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		ALTER TABLE hosts ADD COLUMN key_id TEXT REFERENCES ssh_keys(id);
+		CREATE TABLE recovery_codes (
+			hash BLOB PRIMARY KEY,
+			created_at INTEGER NOT NULL,
+			used_at INTEGER
+		);`),
+		moveHostKeysToLibrary,
+		sqlStep(`ALTER TABLE hosts DROP COLUMN key_fingerprint`),
+	},
+}
+
+// moveHostKeysToLibrary turns each host-owned private key from schema 1
+// into a library key (deduplicated by fingerprint) referenced by the host.
+func moveHostKeysToLibrary(ctx context.Context, tx *sql.Tx, s *Store) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, alias, credential_id, credential FROM hosts WHERE auth_kind='key'`)
+	if err != nil {
+		return err
+	}
+	type hostKey struct {
+		id, alias, credID string
+		blob              []byte
+	}
+	var hosts []hostKey
+	for rows.Next() {
+		var h hostKey
+		if err := rows.Scan(&h.id, &h.alias, &h.credID, &h.blob); err != nil {
+			rows.Close()
+			return err
+		}
+		hosts = append(hosts, h)
+	}
+	rows.Close()
+	byFingerprint := map[string]string{}
+	for _, h := range hosts {
+		pemBytes, err := s.Key.Open(secrets.PurposeTargetCred, passwordAAD(h.id, h.credID), h.blob)
+		if err != nil {
+			return fmt.Errorf("migrate key of host %s: %w", h.alias, err)
+		}
+		m, err := KeyMaterialFromPEM(pemBytes)
+		if err != nil {
+			return fmt.Errorf("migrate key of host %s: %w", h.alias, err)
+		}
+		keyID, ok := byFingerprint[m.Fingerprint]
+		if !ok {
+			if keyID, err = s.insertKey(ctx, tx, h.alias+" key", m); err != nil {
+				return err
+			}
+			byFingerprint[m.Fingerprint] = keyID
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE hosts SET key_id=?, credential=x'' WHERE id=?`, keyID, h.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const metaKeyCheck = "master_key_check"
@@ -147,9 +221,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, migrations[v-1]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %d: %w", v, err)
+		for _, step := range migrations[v-1] {
+			if err := step(ctx, tx, s); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %d: %w", v, err)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, v, s.now().Unix()); err != nil {
 			tx.Rollback()
@@ -174,7 +250,7 @@ func (s *Store) bindKey(ctx context.Context) error {
 	// No key check yet. Refuse if any encrypted data exists: that data was
 	// written under an unknown key and must not be adopted by a new one.
 	var encrypted int
-	if err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM owner) + (SELECT count(*) FROM hosts)`).Scan(&encrypted); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM owner) + (SELECT count(*) FROM hosts) + (SELECT count(*) FROM ssh_keys)`).Scan(&encrypted); err != nil {
 		return err
 	}
 	if encrypted > 0 {

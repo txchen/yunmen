@@ -67,6 +67,7 @@ type term struct {
 	// closes the connection when a Read or Write context is cancelled.
 	ioCtx    context.Context
 	deadline time.Time
+	lease    *live.Lease
 
 	mu      sync.Mutex
 	reason  protocol.EndReason
@@ -117,12 +118,13 @@ func Serve(parent context.Context, conn *websocket.Conn, p Principal, d Deps) {
 	t := &term{d: d, conn: conn, ctx: ctx, cancel: cancel, ioCtx: ioCtx, deadline: p.Deadline, view: view,
 		queue: make(chan item, 8), input: make(chan []byte, inputFrames), ackSignal: make(chan struct{}, 1), progress: make(chan struct{})}
 
-	release, err := d.Registry.Register(p.Cred, open.HostID, live.KindTerminal, p.Deadline, t.end)
+	lease, err := d.Registry.Register(p.Cred, open.HostID, live.KindTerminal, p.Deadline, t.end)
 	if err != nil {
 		writeEnd(parent, conn, live.Reason(err), err.Error())
 		return
 	}
-	defer release()
+	t.lease = lease
+	defer lease.Release()
 
 	writerDone := make(chan struct{})
 	go func() { defer close(writerDone); t.writer() }()
@@ -143,7 +145,7 @@ func Serve(parent context.Context, conn *websocket.Conn, p Principal, d Deps) {
 		t.session.Close()
 	}
 	t.mu.Unlock()
-	release()
+	lease.Release()
 	// The close handshake can wait on a slow peer; SSH is already released.
 	conn.Close(websocket.StatusNormalClosure, "")
 	d.Log.Info("terminal closed", "host", host.Alias, "reason", reason, "duration_s", int(time.Since(started).Seconds()))
@@ -185,6 +187,11 @@ func (t *term) open(hostID, termName string) (store.Host, error) {
 	}
 	if err != nil {
 		return host, &sshconn.Error{Reason: protocol.EndOpenFailed, Msg: "could not load host"}
+	}
+	if cred.KeyID != "" {
+		if err := t.lease.BindKey(cred.KeyID); err != nil {
+			return host, &sshconn.Error{Reason: protocol.EndRevoked, Msg: err.Error()}
+		}
 	}
 	client, err := sshconn.Dial(t.ctx, host, cred)
 	if err != nil {

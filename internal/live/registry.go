@@ -35,23 +35,26 @@ const (
 type entry struct {
 	cred   Credential
 	hostID string
+	keyID  string
 	kind   Kind
 	end    EndFunc
 	timer  *time.Timer
 }
 
 type Registry struct {
-	mu       sync.Mutex
-	nextID   uint64
-	entries  map[uint64]*entry
-	revoked  map[Credential]struct{}
-	removed  map[string]struct{}
-	shutdown bool
-	now      func() time.Time
+	mu      sync.Mutex
+	nextID  uint64
+	entries map[uint64]*entry
+	revoked map[Credential]struct{}
+	removed map[string]struct{}
+	// removedKeys tombstones deleted library keys.
+	removedKeys map[string]struct{}
+	shutdown    bool
+	now         func() time.Time
 }
 
 func New() *Registry {
-	return &Registry{entries: map[uint64]*entry{}, revoked: map[Credential]struct{}{}, removed: map[string]struct{}{}, now: time.Now}
+	return &Registry{entries: map[uint64]*entry{}, revoked: map[Credential]struct{}{}, removed: map[string]struct{}{}, removedKeys: map[string]struct{}{}, now: time.Now}
 }
 
 var (
@@ -60,6 +63,7 @@ var (
 	ErrHostRemoved = errors.New("host removed")
 	ErrShutdown    = errors.New("server shutting down")
 	ErrTooMany     = errors.New("too many open terminals and transfers for this credential")
+	ErrKeyRemoved  = errors.New("the SSH key was removed from the key library")
 )
 
 // MaxPerCredential bounds concurrent operations for one credential, so a
@@ -69,7 +73,7 @@ const MaxPerCredential = 32
 // Reason maps a registration error to the end reason shown to clients.
 func Reason(err error) protocol.EndReason {
 	switch {
-	case errors.Is(err, ErrRevoked):
+	case errors.Is(err, ErrRevoked), errors.Is(err, ErrKeyRemoved):
 		return protocol.EndRevoked
 	case errors.Is(err, ErrExpired):
 		return protocol.EndExpired
@@ -81,10 +85,40 @@ func Reason(err error) protocol.EndReason {
 	return protocol.EndOpenFailed
 }
 
-// Register tracks an operation until release is called. end is invoked (at
-// most usefully once) when the deadline passes or the credential, host or
-// server goes away. Call Register before allocating any SSH resources.
-func (r *Registry) Register(cred Credential, hostID string, kind Kind, deadline time.Time, end EndFunc) (release func(), err error) {
+// Lease is one registered operation.
+type Lease struct {
+	r    *Registry
+	id   uint64
+	e    *entry
+	once sync.Once
+}
+
+// Release stops tracking the operation. It is idempotent.
+func (l *Lease) Release() {
+	l.once.Do(func() {
+		l.r.mu.Lock()
+		delete(l.r.entries, l.id)
+		l.r.mu.Unlock()
+		l.e.timer.Stop()
+	})
+}
+
+// BindKey records the library key the operation authenticates with, so
+// removing that key ends it. It fails if the key was already removed.
+func (l *Lease) BindKey(keyID string) error {
+	l.r.mu.Lock()
+	defer l.r.mu.Unlock()
+	if _, gone := l.r.removedKeys[keyID]; gone {
+		return ErrKeyRemoved
+	}
+	l.e.keyID = keyID
+	return nil
+}
+
+// Register tracks an operation until Release is called. end is invoked when
+// the deadline passes or the credential, host, key or server goes away.
+// Call Register before allocating any SSH resources.
+func (r *Registry) Register(cred Credential, hostID string, kind Kind, deadline time.Time, end EndFunc) (*Lease, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
@@ -109,19 +143,17 @@ func (r *Registry) Register(cred Credential, hostID string, kind Kind, deadline 
 		return nil, ErrTooMany
 	}
 	r.nextID++
-	id := r.nextID
 	e := &entry{cred: cred, hostID: hostID, kind: kind, end: end}
 	e.timer = time.AfterFunc(wait, func() { end(protocol.EndExpired) })
-	r.entries[id] = e
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			r.mu.Lock()
-			delete(r.entries, id)
-			r.mu.Unlock()
-			e.timer.Stop()
-		})
-	}, nil
+	r.entries[r.nextID] = e
+	return &Lease{r: r, id: r.nextID, e: e}, nil
+}
+
+// RemoveKey ends every operation using keyID and rejects later binds.
+func (r *Registry) RemoveKey(keyID string) int {
+	r.mu.Lock()
+	r.removedKeys[keyID] = struct{}{}
+	return r.endMatching(func(e *entry) bool { return e.keyID == keyID }, protocol.EndRevoked)
 }
 
 func (r *Registry) isRevoked(c Credential) bool { _, ok := r.revoked[c]; return ok }

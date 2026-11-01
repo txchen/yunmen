@@ -30,6 +30,8 @@ type Host struct {
 	Port           int       `json:"port"`
 	Username       string    `json:"username"`
 	AuthKind       AuthKind  `json:"authKind"`
+	KeyID          string    `json:"keyId,omitempty"`
+	KeyLabel       string    `json:"keyLabel,omitempty"`
 	KeyFingerprint string    `json:"keyFingerprint,omitempty"`
 	HostKey        []byte    `json:"-"`
 	CredentialID   string    `json:"-"`
@@ -42,6 +44,7 @@ type Host struct {
 // matching Kind. It must never be serialized to clients.
 type Credential struct {
 	Kind       AuthKind
+	KeyID      string // library key, for AuthKey; lets revocation find users of the key
 	PrivateKey []byte // unencrypted OpenSSH PEM, normalized at import
 	Password   string
 }
@@ -84,24 +87,35 @@ func (h HostSpec) Endpoint() string { return net.JoinHostPort(h.Address, fmt.Spr
 
 func (h Host) Endpoint() string { return net.JoinHostPort(h.Address, fmt.Sprint(h.Port)) }
 
-func credAAD(hostID, credID string) string { return hostID + "/" + credID }
+func passwordAAD(hostID, credID string) string { return hostID + "/" + credID }
 
-func (s *Store) sealCredential(hostID, credID string, c Credential) []byte {
-	var pt []byte
-	if c.Kind == AuthKey {
-		pt = c.PrivateKey
-	} else {
-		pt = []byte(c.Password)
-	}
-	return s.Key.Seal(secrets.PurposeTargetCred, credAAD(hostID, credID), pt)
+// HostAuth is how a host authenticates: a library key or a host-owned password.
+type HostAuth struct {
+	Kind     AuthKind
+	KeyID    string // AuthKey
+	Password string // AuthPassword
 }
 
-const hostCols = `id, alias, name, address, port, username, auth_kind, credential_id, key_fingerprint, host_key, revision, created_at, updated_at`
+// authColumns returns the stored representation of auth for host id: the
+// key reference, a fresh credential ID and the sealed password (empty for keys).
+func (s *Store) authColumns(hostID string, a HostAuth) (keyID sql.NullString, credID string, blob []byte) {
+	credID = NewID()
+	if a.Kind == AuthKey {
+		return sql.NullString{String: a.KeyID, Valid: true}, credID, []byte{}
+	}
+	return sql.NullString{}, credID, s.Key.Seal(secrets.PurposeTargetCred, passwordAAD(hostID, credID), []byte(a.Password))
+}
 
-func scanHost(r scanner) (Host, error) {
+const hostSelect = `SELECT h.id, h.alias, h.name, h.address, h.port, h.username, h.auth_kind, h.credential_id,
+	coalesce(h.key_id, ''), coalesce(k.label, ''), coalesce(k.fingerprint, ''), h.host_key, h.revision, h.created_at, h.updated_at
+	FROM hosts h LEFT JOIN ssh_keys k ON k.id = h.key_id`
+
+func scanHost(r scanner, extra ...any) (Host, error) {
 	var h Host
 	var created, updated int64
-	err := r.Scan(&h.ID, &h.Alias, &h.Name, &h.Address, &h.Port, &h.Username, &h.AuthKind, &h.CredentialID, &h.KeyFingerprint, &h.HostKey, &h.Revision, &created, &updated)
+	dest := append([]any{&h.ID, &h.Alias, &h.Name, &h.Address, &h.Port, &h.Username, &h.AuthKind, &h.CredentialID,
+		&h.KeyID, &h.KeyLabel, &h.KeyFingerprint, &h.HostKey, &h.Revision, &created, &updated}, extra...)
+	err := r.Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Host{}, ErrNotFound
 	}
@@ -109,31 +123,40 @@ func scanHost(r scanner) (Host, error) {
 	return h, err
 }
 
-var ErrAliasTaken = errors.New("alias already in use")
+var (
+	ErrAliasTaken = errors.New("alias already in use")
+	ErrNoSuchKey  = errors.New("selected key does not exist")
+)
 
 func isUnique(err error) bool { return err != nil && strings.Contains(err.Error(), "UNIQUE") }
 
-// CreateHost stores a host with its pinned host key and encrypted credential.
-func (s *Store) CreateHost(ctx context.Context, spec HostSpec, hostKey []byte, cred Credential, keyFingerprint string) (Host, error) {
+func isForeignKey(err error) bool { return err != nil && strings.Contains(err.Error(), "FOREIGN KEY") }
+
+// CreateHost stores a host with its pinned host key and authentication.
+func (s *Store) CreateHost(ctx context.Context, spec HostSpec, hostKey []byte, auth HostAuth) (Host, error) {
 	now := s.now().UTC().Truncate(time.Second)
-	h := Host{ID: NewID(), Alias: spec.Alias, Name: spec.Name, Address: spec.Address, Port: spec.Port, Username: spec.Username,
-		AuthKind: cred.Kind, KeyFingerprint: keyFingerprint, HostKey: hostKey, CredentialID: NewID(), Revision: 1, CreatedAt: now, UpdatedAt: now}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`, credential) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		h.ID, h.Alias, h.Name, h.Address, h.Port, h.Username, h.AuthKind, h.CredentialID, h.KeyFingerprint, h.HostKey, h.Revision, unix(now), unix(now),
-		s.sealCredential(h.ID, h.CredentialID, cred))
-	if isUnique(err) {
+	id := NewID()
+	keyID, credID, blob := s.authColumns(id, auth)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (id, alias, name, address, port, username, auth_kind, credential_id, key_id, credential, host_key, revision, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?)`,
+		id, spec.Alias, spec.Name, spec.Address, spec.Port, spec.Username, auth.Kind, credID, keyID, blob, hostKey, unix(now), unix(now))
+	switch {
+	case isUnique(err):
 		return Host{}, ErrAliasTaken
+	case isForeignKey(err):
+		return Host{}, ErrNoSuchKey
+	case err != nil:
+		return Host{}, err
 	}
-	return h, err
+	return s.GetHost(ctx, id)
 }
 
 // HostUpdate replaces metadata. A nil HostKey keeps the pin and is only
-// allowed when the endpoint is unchanged. A nil Credential keeps the saved one.
+// allowed when the endpoint is unchanged. A nil Auth keeps the saved one.
 type HostUpdate struct {
-	Spec           HostSpec
-	HostKey        []byte
-	Credential     *Credential
-	KeyFingerprint string
+	Spec    HostSpec
+	HostKey []byte
+	Auth    *HostAuth
 }
 
 var ErrTrustRequired = errors.New("address or port changed: verify the new host key before saving")
@@ -144,7 +167,7 @@ func (s *Store) UpdateHost(ctx context.Context, id string, expectedRevision int6
 		return Host{}, err
 	}
 	defer tx.Rollback()
-	h, err := scanHost(tx.QueryRowContext(ctx, `SELECT `+hostCols+` FROM hosts WHERE id=?`, id))
+	h, err := scanHost(tx.QueryRowContext(ctx, hostSelect+` WHERE h.id=?`, id))
 	if err != nil {
 		return Host{}, err
 	}
@@ -154,29 +177,32 @@ func (s *Store) UpdateHost(ctx context.Context, id string, expectedRevision int6
 	if u.HostKey == nil && (h.Address != u.Spec.Address || h.Port != u.Spec.Port) {
 		return Host{}, ErrTrustRequired
 	}
-	h.Alias, h.Name, h.Address, h.Port, h.Username = u.Spec.Alias, u.Spec.Name, u.Spec.Address, u.Spec.Port, u.Spec.Username
+	hostKey := h.HostKey
 	if u.HostKey != nil {
-		h.HostKey = u.HostKey
+		hostKey = u.HostKey
 	}
-	h.Revision++
-	h.UpdatedAt = s.now().UTC().Truncate(time.Second)
-	if u.Credential != nil {
-		h.AuthKind, h.CredentialID, h.KeyFingerprint = u.Credential.Kind, NewID(), u.KeyFingerprint
-		_, err = tx.ExecContext(ctx, `UPDATE hosts SET credential=?, credential_id=?, auth_kind=?, key_fingerprint=? WHERE id=?`,
-			s.sealCredential(h.ID, h.CredentialID, *u.Credential), h.CredentialID, h.AuthKind, h.KeyFingerprint, id)
+	if u.Auth != nil {
+		keyID, credID, blob := s.authColumns(id, *u.Auth)
+		_, err = tx.ExecContext(ctx, `UPDATE hosts SET auth_kind=?, key_id=?, credential_id=?, credential=? WHERE id=?`, u.Auth.Kind, keyID, credID, blob, id)
+		if isForeignKey(err) {
+			return Host{}, ErrNoSuchKey
+		}
 		if err != nil {
 			return Host{}, err
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE hosts SET alias=?, name=?, address=?, port=?, username=?, host_key=?, revision=?, updated_at=? WHERE id=?`,
-		h.Alias, h.Name, h.Address, h.Port, h.Username, h.HostKey, h.Revision, unix(h.UpdatedAt), id)
+		u.Spec.Alias, u.Spec.Name, u.Spec.Address, u.Spec.Port, u.Spec.Username, hostKey, h.Revision+1, unix(s.now()), id)
 	if isUnique(err) {
 		return Host{}, ErrAliasTaken
 	}
 	if err != nil {
 		return Host{}, err
 	}
-	return h, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return Host{}, err
+	}
+	return s.GetHost(ctx, id)
 }
 
 func (s *Store) DeleteHost(ctx context.Context, id string) error {
@@ -191,7 +217,7 @@ func (s *Store) DeleteHost(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+hostCols+` FROM hosts ORDER BY alias`)
+	rows, err := s.db.QueryContext(ctx, hostSelect+` ORDER BY h.alias`)
 	if err != nil {
 		return nil, err
 	}
@@ -208,36 +234,31 @@ func (s *Store) ListHosts(ctx context.Context) ([]Host, error) {
 }
 
 func (s *Store) GetHost(ctx context.Context, id string) (Host, error) {
-	return scanHost(s.db.QueryRowContext(ctx, `SELECT `+hostCols+` FROM hosts WHERE id=?`, id))
+	return scanHost(s.db.QueryRowContext(ctx, hostSelect+` WHERE h.id=?`, id))
 }
 
-// HostSnapshot loads an immutable copy of the host and its decrypted credential
-// for one connection.
+// HostSnapshot loads an immutable copy of the host and its decrypted
+// credential for one connection.
 func (s *Store) HostSnapshot(ctx context.Context, id string) (Host, Credential, error) {
 	var blob []byte
-	row := s.db.QueryRowContext(ctx, `SELECT `+hostCols+`, credential FROM hosts WHERE id=?`, id)
-	var h Host
-	var created, updated int64
-	err := row.Scan(&h.ID, &h.Alias, &h.Name, &h.Address, &h.Port, &h.Username, &h.AuthKind, &h.CredentialID, &h.KeyFingerprint, &h.HostKey, &h.Revision, &created, &updated, &blob)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Host{}, Credential{}, ErrNotFound
-	}
+	h, err := scanHost(s.db.QueryRowContext(ctx, hostSelectWithCredential+` WHERE h.id=?`, id), &blob)
 	if err != nil {
 		return Host{}, Credential{}, err
 	}
-	h.CreatedAt, h.UpdatedAt = fromUnix(created), fromUnix(updated)
-	pt, err := s.Key.Open(secrets.PurposeTargetCred, credAAD(h.ID, h.CredentialID), blob)
+	if h.AuthKind == AuthKey {
+		c, err := s.KeyCredential(ctx, h.KeyID)
+		return h, c, err
+	}
+	pt, err := s.Key.Open(secrets.PurposeTargetCred, passwordAAD(h.ID, h.CredentialID), blob)
 	if err != nil {
 		return Host{}, Credential{}, err
 	}
-	c := Credential{Kind: h.AuthKind}
-	if c.Kind == AuthKey {
-		c.PrivateKey = pt
-	} else {
-		c.Password = string(pt)
-	}
-	return h, c, nil
+	return h, Credential{Kind: AuthPassword, Password: string(pt)}, nil
 }
+
+const hostSelectWithCredential = `SELECT h.id, h.alias, h.name, h.address, h.port, h.username, h.auth_kind, h.credential_id,
+	coalesce(h.key_id, ''), coalesce(k.label, ''), coalesce(k.fingerprint, ''), h.host_key, h.revision, h.created_at, h.updated_at, h.credential
+	FROM hosts h LEFT JOIN ssh_keys k ON k.id = h.key_id`
 
 // Upload ledger: records temp files created on targets so interrupted
 // uploads can be cleaned up after a restart.

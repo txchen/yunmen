@@ -19,7 +19,34 @@ Browser state-changing requests (any method other than GET) must send `Origin` e
 
 - `POST /api/v1/auth/login` `{password, code}` → `200 {expiresAt}` and sets the cookie. `401` wrong password or code (deliberately not distinguished), `429` too many failures (5 per 5 minutes), `503` owner not initialized.
 - `POST /api/v1/auth/logout` → `204`. Ends this session's terminals and transfers.
-- `GET /api/v1/auth/session` → `200 {expiresAt, mode}` or `401`. Use it at app start to decide between the login view and the app.
+- `GET /api/v1/auth/session` → `200 {expiresAt, mode, recoveryCodesRemaining}` or `401`. Use it at app start to decide between the login view and the app.
+
+### Recovery codes
+
+The owner gets 10 one-time recovery codes at `init`, formatted `XXXXX-XXXXX` (case-insensitive; dashes and spaces ignored). A recovery code replaces a lost authenticator. It never signs in by itself.
+
+- `POST /api/v1/auth/recovery/start` `{password, recoveryCode}` → `200 {challengeId, secret, otpauthUri, expiresAt}`. Needs no session. Same Access, Origin and rate-limit rules as login. `401` if either value is wrong (not distinguished). The code is not used up yet. Show `otpauthUri` as a QR code and `secret` (base32) for manual entry. The challenge lasts 10 minutes.
+- `POST /api/v1/auth/recovery/finish` `{challengeId, code}` → `204` when `code` is a valid TOTP code for the new secret. This uses up the recovery code, replaces the TOTP secret, and revokes every browser session and CLI device, closing their terminals. The owner then signs in normally with the new authenticator. `401` wrong code, `410` challenge expired or recovery code already used.
+- `POST /api/v1/auth/recovery-codes` `{password, code}` (signed in, plus password and current TOTP) → `200 {codes: ["XXXXX-XXXXX", …]}`. Replaces all codes. They are shown only once. Errors are the same as for device approval: `401` wrong password or code, `429` rate limited.
+- Wrong values on `start` and `finish` count toward the login rate limit, so both can return `429`.
+
+### SSH keys (key library)
+
+Key object, never containing private material:
+
+```json
+{ "id": "…", "label": "laptop key", "keyType": "ssh-ed25519",
+  "fingerprint": "SHA256:…", "publicKey": "ssh-ed25519 AAAA… yunmen:laptop key",
+  "createdAt": "…", "usedBy": ["home", "vps"] }
+```
+
+- `GET /api/v1/keys` → `200 [Key]`.
+- `POST /api/v1/keys` → `201 Key`. The body is one of:
+  - `{label, generate: true}`: the gateway generates an Ed25519 key. Show `publicKey` so the owner can add it to `~/.ssh/authorized_keys` on targets. The private key never leaves the gateway.
+  - `{label, privateKey, passphrase?}`: import. `400` for unsupported or encrypted keys without a passphrase. `409` if the same key (fingerprint) is already in the library.
+- `PATCH /api/v1/keys/{id}` `{label}` → `200 Key`.
+- Labels are 1 to 64 characters on one line (`400` otherwise). They do not have to be unique; the fingerprint identifies a key.
+- `DELETE /api/v1/keys/{id}` → `204`. `409 {error, usedBy}` while hosts use it. Deleting also ends any terminal or transfer still running with that key.
 
 ### Hosts
 
@@ -30,6 +57,7 @@ Host object:
   "id": "…", "alias": "home", "name": "Home server",
   "address": "10.0.0.2", "port": 22, "username": "me",
   "authKind": "key" | "password",
+  "keyId": "…", "keyLabel": "laptop key", // present exactly when authKind is "key"
   "keyFingerprint": "SHA256:…",          // only for key auth: the client key
   "hostKeyType": "ssh-ed25519",
   "hostKeyFingerprint": "SHA256:…",      // the pinned target host key
@@ -42,7 +70,7 @@ Saved passwords and private keys are never returned.
 - `GET /api/v1/hosts` → `200 [Host]`.
 - `POST /api/v1/hosts/probe` `{address, port}` → `200 {observationId, endpoint, keyType, fingerprint, expiresAt}`. Fetches the target host key without sending any credential. `502 {error}` when unreachable. The UI must show `keyType` and `fingerprint` and require the owner to confirm them against an independent source (for example `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the target) before saving.
 - `POST /api/v1/hosts` `{alias, name, address, port, username, auth, observationId}` → `201 {host, sftpAvailable}`.
-  - `auth` is `{kind: "key", privateKey: "<PEM text>", passphrase?: "…"}` or `{kind: "password", password: "…"}`.
+  - `auth` is `{kind: "key", keyId: "…"}` (a library key), `{kind: "key", privateKey: "<PEM text>", passphrase?: "…", keyLabel?: "…"}` (imports into the library, or reuses the library entry with the same fingerprint and keeps that entry's label; the key is stored only if the connection test passes), or `{kind: "password", password: "…"}`.
   - The server tests SSH authentication with the observed key pinned before saving. Nothing is saved on failure.
   - `400` validation error or missing/expired observation, `409` alias taken, `422 {error, reason: "target_auth_failed"}` credential rejected, `502 {error, reason}` network or host key problem.
 - `PUT /api/v1/hosts/{id}` same body plus `revision`. `auth` omitted keeps the saved credential. `observationId` is required when address or port changes, and optional otherwise (re-pin after an intentional host key change). `409` when `revision` is stale. Same test-before-save behavior.

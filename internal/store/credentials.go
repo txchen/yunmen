@@ -54,14 +54,23 @@ func (s *Store) HasOwner(ctx context.Context) (bool, error) {
 	return n > 0, err
 }
 
-func (s *Store) CreateOwner(ctx context.Context, passwordHash string, totpSecret []byte) error {
-	enc := s.Key.Seal(secrets.PurposeTOTP, "owner", totpSecret)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO owner (id, password_hash, totp_secret, created_at) VALUES (1, ?, ?, ?)`,
-		passwordHash, enc, unix(s.now()))
+// CreateOwner creates the owner and its first recovery codes together.
+func (s *Store) CreateOwner(ctx context.Context, passwordHash string, totpSecret []byte) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New("owner already exists; use the reset commands for recovery")
+		return nil, err
 	}
-	return nil
+	defer tx.Rollback()
+	enc := s.Key.Seal(secrets.PurposeTOTP, "owner", totpSecret)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO owner (id, password_hash, totp_secret, created_at) VALUES (1, ?, ?, ?)`,
+		passwordHash, enc, unix(s.now())); err != nil {
+		return nil, errors.New("owner already exists; use the reset commands for recovery")
+	}
+	codes, err := s.replaceRecoveryCodesTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return codes, tx.Commit()
 }
 
 func (s *Store) Owner(ctx context.Context) (Owner, error) {
@@ -97,6 +106,13 @@ func (s *Store) ResetOwnerSecrets(ctx context.Context, passwordHash string, totp
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.resetOwnerTx(ctx, tx, passwordHash, totpSecret); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) resetOwnerTx(ctx context.Context, tx *sql.Tx, passwordHash string, totpSecret []byte) error {
 	if passwordHash != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE owner SET password_hash=? WHERE id=1`, passwordHash); err != nil {
 			return err
@@ -112,10 +128,8 @@ func (s *Store) ResetOwnerSecrets(ctx context.Context, passwordHash string, totp
 	if _, err := tx.ExecContext(ctx, `UPDATE web_sessions SET revoked_at=? WHERE revoked_at IS NULL`, now); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at=? WHERE revoked_at IS NULL`, now); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at=? WHERE revoked_at IS NULL`, now)
+	return err
 }
 
 const (

@@ -25,6 +25,8 @@ type term struct {
 	ready protocol.Control
 	// inputAcked is the server's cumulative input ack, updated while reading.
 	inputAcked atomic.Int64
+	// inputSent counts input bytes sent; senders may be different goroutines.
+	inputSent atomic.Int64
 
 	mu         sync.Mutex // guards out, acked, end, closed once the reader runs
 	closed     bool
@@ -103,6 +105,7 @@ func (tm *term) send(b []byte) {
 		if err := tm.conn.Write(context.Background(), websocket.MessageBinary, b[:n]); err != nil {
 			tm.t.Fatalf("send: %v", err)
 		}
+		tm.inputSent.Add(int64(n))
 		b = b[n:]
 	}
 }

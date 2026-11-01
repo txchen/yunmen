@@ -22,19 +22,20 @@ import (
 )
 
 type Server struct {
-	cfg       Config
-	store     *store.Store
-	reg       *live.Registry
-	access    *auth.AccessVerifier // nil in standalone mode
-	log       *slog.Logger
-	perClient *limiter // failed owner-credential checks per client address
-	global    *limiter // and across all clients, for the single owner
-	pairings  *pairings
-	probes    *observations
-	files     *files.Service
-	web       fs.FS
-	termDeps  terminal.Deps
-	now       func() time.Time
+	cfg        Config
+	store      *store.Store
+	reg        *live.Registry
+	access     *auth.AccessVerifier // nil in standalone mode
+	log        *slog.Logger
+	perClient  *limiter // failed owner-credential checks per client address
+	global     *limiter // and across all clients, for the single owner
+	pairings   *pairings
+	probes     *observations
+	recoveries *recoveries
+	files      *files.Service
+	web        fs.FS
+	termDeps   terminal.Deps
+	now        func() time.Time
 }
 
 type Options struct {
@@ -49,7 +50,7 @@ type Options struct {
 func New(o Options) *Server {
 	reg := live.New()
 	s := &Server{cfg: o.Config, store: o.Store, reg: reg, access: o.Access, log: o.Log, web: o.Web, now: time.Now,
-		perClient: newLimiter(5, 5*time.Minute), global: newLimiter(20, 5*time.Minute), pairings: newPairings(), probes: newObservations()}
+		perClient: newLimiter(5, 5*time.Minute), global: newLimiter(20, 5*time.Minute), pairings: newPairings(), probes: newObservations(), recoveries: newRecoveries()}
 	s.files = files.New(o.Store, reg, o.Log)
 	s.termDeps = o.Terminal
 	s.termDeps.Store, s.termDeps.Registry, s.termDeps.Log = o.Store, reg, o.Log
@@ -69,6 +70,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.withAccess(auth.PrincipalOwner, s.handleLogin))
 	mux.HandleFunc("POST /api/v1/auth/logout", s.owner(s.handleLogout))
 	mux.HandleFunc("GET /api/v1/auth/session", s.owner(s.handleSession))
+	mux.HandleFunc("POST /api/v1/auth/recovery/start", s.withAccess(auth.PrincipalOwner, s.handleRecoveryStart))
+	mux.HandleFunc("POST /api/v1/auth/recovery/finish", s.withAccess(auth.PrincipalOwner, s.handleRecoveryFinish))
+	mux.HandleFunc("POST /api/v1/auth/recovery-codes", s.owner(s.handleRegenerateRecoveryCodes))
+
+	mux.HandleFunc("GET /api/v1/keys", s.owner(s.handleListKeys))
+	mux.HandleFunc("POST /api/v1/keys", s.owner(s.handleCreateKey))
+	mux.HandleFunc("PATCH /api/v1/keys/{id}", s.owner(s.handleRenameKey))
+	mux.HandleFunc("DELETE /api/v1/keys/{id}", s.owner(s.handleDeleteKey))
 
 	mux.HandleFunc("GET /api/v1/hosts", s.owner(s.handleListHosts))
 	mux.HandleFunc("POST /api/v1/hosts/probe", s.owner(s.handleProbe))
@@ -298,6 +307,8 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrAliasTaken):
 		return http.StatusConflict
+	case errors.Is(err, store.ErrNoSuchKey):
+		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
 }

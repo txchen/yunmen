@@ -36,6 +36,8 @@ type Target struct {
 	Password string
 	// Home is the account's working directory on the target.
 	Home string
+	// AuthorizedKeys is the authorized_keys file of the OpenSSH target.
+	AuthorizedKeys string
 }
 
 func (t Target) Endpoint() string { return net.JoinHostPort(t.Address, strconv.Itoa(t.Port)) }
@@ -121,7 +123,8 @@ esac
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	waitListening(t, port, &logs)
 	u, _ := user.Current()
-	return Target{Address: "127.0.0.1", Port: port, Username: u.Username, HostKey: hostSigner.PublicKey(), PrivateKey: userPEM, Home: home}
+	return Target{Address: "127.0.0.1", Port: port, Username: u.Username, HostKey: hostSigner.PublicKey(), PrivateKey: userPEM, Home: home,
+		AuthorizedKeys: filepath.Join(dir, "authorized_keys")}
 }
 
 func waitListening(t testing.TB, port int, logs *bytes.Buffer) {

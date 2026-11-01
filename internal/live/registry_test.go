@@ -70,11 +70,11 @@ func TestRevokeRacingRegisterNeverLeavesUntrackedSessions(t *testing.T) {
 func TestDeadlineEndsRegistration(t *testing.T) {
 	r := New()
 	got := make(chan protocol.EndReason, 1)
-	release, err := r.Register(WebCredential("w"), "h", KindTerminal, time.Now().Add(50*time.Millisecond), func(e protocol.EndReason) { got <- e })
+	lease, err := r.Register(WebCredential("w"), "h", KindTerminal, time.Now().Add(50*time.Millisecond), func(e protocol.EndReason) { got <- e })
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer release()
+	defer lease.Release()
 	select {
 	case e := <-got:
 		if e != protocol.EndExpired {

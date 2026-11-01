@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/txchen/yunmen/internal/files"
@@ -67,8 +68,10 @@ func (s *Server) handleProbe(w http.ResponseWriter, r *http.Request, _ ownerCtx)
 
 type authInput struct {
 	Kind       store.AuthKind `json:"kind"`
+	KeyID      string         `json:"keyId"`
 	PrivateKey string         `json:"privateKey"`
 	Passphrase string         `json:"passphrase"`
+	KeyLabel   string         `json:"keyLabel"`
 	Password   string         `json:"password"`
 }
 
@@ -83,21 +86,73 @@ type hostInput struct {
 	Revision      int64      `json:"revision"`
 }
 
-func parseCredential(a authInput) (store.Credential, string, error) {
+// pendingAuth is a parsed auth input. A key imported inline is added to
+// the library only after the connection test passes, so a failed save
+// leaves nothing behind.
+type pendingAuth struct {
+	auth     store.HostAuth
+	cred     store.Credential
+	newKey   *store.KeyMaterial
+	keyLabel string
+}
+
+func (s *Server) parseAuth(ctx context.Context, a authInput, alias string) (pendingAuth, int, error) {
 	switch a.Kind {
 	case store.AuthKey:
-		pemBytes, fp, err := sshconn.ImportPrivateKey([]byte(a.PrivateKey), a.Passphrase)
-		if err != nil {
-			return store.Credential{}, "", err
+		if a.KeyID != "" {
+			cred, err := s.store.KeyCredential(ctx, a.KeyID)
+			if err != nil {
+				return pendingAuth{}, http.StatusBadRequest, store.ErrNoSuchKey
+			}
+			return pendingAuth{auth: store.HostAuth{Kind: store.AuthKey, KeyID: a.KeyID}, cred: cred}, 0, nil
 		}
-		return store.Credential{Kind: store.AuthKey, PrivateKey: pemBytes}, fp, nil
+		m, err := sshconn.ImportPrivateKey([]byte(a.PrivateKey), a.Passphrase)
+		if err != nil {
+			return pendingAuth{}, http.StatusBadRequest, err
+		}
+		label := a.KeyLabel
+		if strings.TrimSpace(label) == "" {
+			label = alias + " key"
+		}
+		if label, err = store.ParseKeyLabel(label); err != nil {
+			return pendingAuth{}, http.StatusBadRequest, err
+		}
+		return pendingAuth{auth: store.HostAuth{Kind: store.AuthKey}, cred: store.Credential{Kind: store.AuthKey, PrivateKey: m.PEM},
+			newKey: &m, keyLabel: label}, 0, nil
 	case store.AuthPassword:
 		if a.Password == "" || len(a.Password) > 1024 {
-			return store.Credential{}, "", errors.New("password must be 1-1024 bytes")
+			return pendingAuth{}, http.StatusBadRequest, errors.New("password must be 1-1024 bytes")
 		}
-		return store.Credential{Kind: store.AuthPassword, Password: a.Password}, "", nil
+		return pendingAuth{auth: store.HostAuth{Kind: store.AuthPassword, Password: a.Password},
+			cred: store.Credential{Kind: store.AuthPassword, Password: a.Password}}, 0, nil
 	}
-	return store.Credential{}, "", errors.New("auth.kind must be `key` or `password`")
+	return pendingAuth{}, http.StatusBadRequest, errors.New("auth.kind must be `key` or `password`")
+}
+
+// commitKey stores an inline-imported key, reusing a library entry with
+// the same fingerprint (whose label is kept). It returns an undo func that
+// removes a key it created, for when the host write then fails.
+func (s *Server) commitKey(ctx context.Context, p *pendingAuth) (undo func(), err error) {
+	undo = func() {}
+	if p.newKey == nil {
+		return undo, nil
+	}
+	if k, err := s.store.KeyByFingerprint(ctx, p.newKey.Fingerprint); err == nil {
+		p.auth.KeyID = k.ID
+		return undo, nil
+	}
+	k, err := s.store.CreateKey(ctx, p.keyLabel, *p.newKey)
+	if errors.Is(err, store.ErrKeyExists) {
+		if k, err = s.store.KeyByFingerprint(ctx, p.newKey.Fingerprint); err == nil {
+			p.auth.KeyID = k.ID
+		}
+		return undo, err
+	}
+	if err != nil {
+		return undo, err
+	}
+	p.auth.KeyID = k.ID
+	return func() { s.store.DeleteKey(context.WithoutCancel(ctx), k.ID) }, nil
 }
 
 // testConnection authenticates with the candidate settings before they are
@@ -136,9 +191,9 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request, _ owne
 		httpError(w, http.StatusBadRequest, "auth is required")
 		return
 	}
-	cred, fp, err := parseCredential(*in.Auth)
+	pa, status, err := s.parseAuth(r.Context(), *in.Auth, spec.Alias)
 	if err != nil {
-		httpError(w, http.StatusBadRequest, err.Error())
+		httpError(w, status, err.Error())
 		return
 	}
 	key, ok := s.probes.get(in.ObservationID, spec.Endpoint())
@@ -146,13 +201,19 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request, _ owne
 		httpError(w, http.StatusBadRequest, "verify the host key first (probe expired or does not match this address and port)")
 		return
 	}
-	sftpOK, err := testConnection(r.Context(), spec, key.Marshal(), cred)
+	sftpOK, err := testConnection(r.Context(), spec, key.Marshal(), pa.cred)
 	if err != nil {
 		connectionError(w, err)
 		return
 	}
-	h, err := s.store.CreateHost(r.Context(), spec, key.Marshal(), cred, fp)
+	undoKey, err := s.commitKey(r.Context(), &pa)
 	if err != nil {
+		httpError(w, http.StatusInternalServerError, "could not store the key")
+		return
+	}
+	h, err := s.store.CreateHost(r.Context(), spec, key.Marshal(), pa.auth)
+	if err != nil {
+		undoKey()
 		httpError(w, statusFor(err), err.Error())
 		return
 	}
@@ -178,13 +239,14 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request, _ owne
 	}
 	u := store.HostUpdate{Spec: spec}
 	cred := savedCred
+	var pa pendingAuth
 	if in.Auth != nil {
-		c, fp, err := parseCredential(*in.Auth)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, err.Error())
+		var status int
+		if pa, status, err = s.parseAuth(r.Context(), *in.Auth, spec.Alias); err != nil {
+			httpError(w, status, err.Error())
 			return
 		}
-		cred, u.Credential, u.KeyFingerprint = c, &c, fp
+		cred = pa.cred
 	}
 	hostKey := current.HostKey
 	if in.ObservationID != "" {
@@ -203,7 +265,18 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request, _ owne
 		connectionError(w, err)
 		return
 	}
+	undoKey := func() {}
+	if in.Auth != nil {
+		if undoKey, err = s.commitKey(r.Context(), &pa); err != nil {
+			httpError(w, http.StatusInternalServerError, "could not store the key")
+			return
+		}
+		u.Auth = &pa.auth
+	}
 	h, err := s.store.UpdateHost(r.Context(), id, in.Revision, u)
+	if err != nil {
+		undoKey()
+	}
 	if errors.Is(err, store.ErrConflict) {
 		httpError(w, http.StatusConflict, "host was changed elsewhere; reload and retry")
 		return
@@ -212,7 +285,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request, _ owne
 		httpError(w, statusFor(err), err.Error())
 		return
 	}
-	s.log.Info("host updated", "alias", h.Alias, "credential_replaced", u.Credential != nil, "host_key_replaced", u.HostKey != nil)
+	s.log.Info("host updated", "alias", h.Alias, "credential_replaced", u.Auth != nil, "host_key_replaced", u.HostKey != nil)
 	writeJSON(w, http.StatusOK, map[string]any{"host": viewHost(h), "sftpAvailable": sftpOK})
 }
 

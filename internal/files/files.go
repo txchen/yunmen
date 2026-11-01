@@ -91,11 +91,11 @@ type Caller struct {
 
 // session is one registered SFTP connection.
 type session struct {
-	ctx     context.Context
-	cancel  context.CancelCauseFunc
-	release func()
-	ssh     *ssh.Client
-	sftp    *sftp.Client
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	lease  *live.Lease
+	ssh    *ssh.Client
+	sftp   *sftp.Client
 }
 
 func (s *session) close() {
@@ -106,7 +106,7 @@ func (s *session) close() {
 	if s.ssh != nil {
 		s.ssh.Close()
 	}
-	s.release()
+	s.lease.Release()
 }
 
 var errEnded = errors.New("operation ended")
@@ -114,18 +114,24 @@ var errEnded = errors.New("operation ended")
 // open registers the operation before dialing so revocation always reaches it.
 func (s *Service) open(parent context.Context, c Caller, hostID string) (*session, error) {
 	ctx, cancel := context.WithCancelCause(parent)
-	release, err := s.reg.Register(c.Cred, hostID, live.KindTransfer, c.Deadline, func(r protocol.EndReason) {
+	lease, err := s.reg.Register(c.Cred, hostID, live.KindTransfer, c.Deadline, func(r protocol.EndReason) {
 		cancel(fail(KindGone, protocol.Describe(r)))
 	})
 	if err != nil {
 		cancel(nil)
 		return nil, fail(KindGone, protocol.Describe(live.Reason(err)))
 	}
-	sess := &session{ctx: ctx, cancel: cancel, release: release}
+	sess := &session{ctx: ctx, cancel: cancel, lease: lease}
 	host, cred, err := s.store.HostSnapshot(ctx, hostID)
 	if err != nil {
 		sess.close()
 		return nil, fail(KindNotFound, "host not found")
+	}
+	if cred.KeyID != "" {
+		if err := lease.BindKey(cred.KeyID); err != nil {
+			sess.close()
+			return nil, fail(KindGone, err.Error())
+		}
 	}
 	sess.ssh, err = sshconn.Dial(ctx, host, cred)
 	if err != nil {

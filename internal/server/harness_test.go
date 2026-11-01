@@ -101,7 +101,7 @@ func newHarness(t *testing.T, mode Mode) *harness {
 	t.Cleanup(func() { st.Close() })
 	h := &harness{t: t, store: st, totp: auth.NewTOTPSecret()}
 	hash, _ := auth.HashPassword(ownerPassword)
-	if err := st.CreateOwner(context.Background(), hash, h.totp); err != nil {
+	if _, err := st.CreateOwner(context.Background(), hash, h.totp); err != nil {
 		t.Fatal(err)
 	}
 	cfg := Config{Mode: mode}

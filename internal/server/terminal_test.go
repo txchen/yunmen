@@ -89,12 +89,18 @@ func TestTerminalPreservesArbitraryBytes(t *testing.T) {
 	}
 }
 
+// sendAsync sends b while honoring the input window, like real clients.
 func (tm *term) sendAsync(b []byte) {
+	tm.startReader()
 	for len(b) > 0 {
 		n := min(len(b), protocol.MaxPayload)
+		for tm.inputSent.Load()-tm.inputAcked.Load()+int64(n) > protocol.InputWindow {
+			time.Sleep(time.Millisecond)
+		}
 		if tm.conn.Write(context.Background(), websocket.MessageBinary, b[:n]) != nil {
 			return
 		}
+		tm.inputSent.Add(int64(n))
 		b = b[n:]
 	}
 }

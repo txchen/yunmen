@@ -33,6 +33,7 @@ commands:
   reset-password   set a new owner password; revokes all sessions and devices
   reset-totp       enroll a new TOTP secret; revokes all sessions and devices
   revoke-all       revoke every browser session and CLI device (after a restore)
+  recovery-codes   replace the owner's recovery codes and print the new ones
   genkey           print a new random master key
   version          print the version
 
@@ -56,6 +57,8 @@ func main() {
 		err = resetTOTP()
 	case "revoke-all":
 		err = revokeAll()
+	case "recovery-codes":
+		err = recoveryCodes()
 	case "genkey":
 		fmt.Println(secrets.Generate())
 	case "version":
@@ -216,9 +219,11 @@ func initOwner() error {
 	if err != nil {
 		return err
 	}
-	if err := st.CreateOwner(ctx, hash, secret); err != nil {
+	codes, err := st.CreateOwner(ctx, hash, secret)
+	if err != nil {
 		return err
 	}
+	printRecoveryCodes(t, codes)
 	fmt.Fprintln(t, "Owner initialized. Back up the database and the master key separately (docs/operations.md).")
 	return nil
 }
@@ -286,5 +291,33 @@ func revokeAll() error {
 		return err
 	}
 	fmt.Println("All browser sessions and CLI devices revoked. A running server closes their open terminals within about 15 seconds.")
+	return nil
+}
+
+func printRecoveryCodes(w *os.File, codes []string) {
+	fmt.Fprintln(w, "\nRecovery codes. Each works once to replace a lost authenticator.")
+	fmt.Fprintln(w, "Store them somewhere safe now; they are not shown again:")
+	for i := 0; i < len(codes); i += 2 {
+		fmt.Fprintf(w, "  %s   %s\n", codes[i], codes[i+1])
+	}
+	fmt.Fprintln(w)
+}
+
+func recoveryCodes() error {
+	ctx := context.Background()
+	st, err := openStore(ctx, dataDir())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if _, err := st.Owner(ctx); err != nil {
+		return err
+	}
+	codes, err := st.ReplaceRecoveryCodes(ctx)
+	if err != nil {
+		return err
+	}
+	printRecoveryCodes(os.Stdout, codes)
+	fmt.Println("Previous recovery codes no longer work.")
 	return nil
 }

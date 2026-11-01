@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/dsa"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -170,9 +172,9 @@ func Probe(ctx context.Context, endpoint string) (ssh.PublicKey, error) {
 
 // ImportPrivateKey parses an OpenSSH, PKCS#1, SEC1 or PKCS#8 private key
 // (optionally passphrase protected) and returns it re-encoded as an
-// unencrypted OpenSSH key plus its public fingerprint. The passphrase is not
+// unencrypted OpenSSH key with its public details. The passphrase is not
 // retained.
-func ImportPrivateKey(pemBytes []byte, passphrase string) ([]byte, string, error) {
+func ImportPrivateKey(pemBytes []byte, passphrase string) (store.KeyMaterial, error) {
 	var raw any
 	var err error
 	if passphrase == "" {
@@ -183,25 +185,37 @@ func ImportPrivateKey(pemBytes []byte, passphrase string) ([]byte, string, error
 	var missing *ssh.PassphraseMissingError
 	switch {
 	case errors.As(err, &missing):
-		return nil, "", errors.New("private key is encrypted: supply its passphrase")
+		return store.KeyMaterial{}, errors.New("private key is encrypted: supply its passphrase")
 	case errors.Is(err, x509.IncorrectPasswordError):
-		return nil, "", errors.New("passphrase is incorrect")
+		return store.KeyMaterial{}, errors.New("passphrase is incorrect")
 	case err != nil:
-		return nil, "", errors.New("unsupported or malformed private key; supported: OpenSSH, PKCS#1, SEC1, PKCS#8 encodings of Ed25519, ECDSA and RSA keys")
+		return store.KeyMaterial{}, errors.New("unsupported or malformed private key; supported: OpenSSH, PKCS#1, SEC1, PKCS#8 encodings of Ed25519, ECDSA and RSA keys")
 	}
 	if _, ok := raw.(*dsa.PrivateKey); ok {
-		return nil, "", errors.New("DSA keys are not supported")
+		return store.KeyMaterial{}, errors.New("DSA keys are not supported")
 	}
-	signer, err := ssh.NewSignerFromKey(raw)
-	if err != nil {
-		return nil, "", errors.New("unsupported private key type")
+	if _, err := ssh.NewSignerFromKey(raw); err != nil {
+		return store.KeyMaterial{}, errors.New("unsupported private key type")
 	}
 	block, err := ssh.MarshalPrivateKey(raw, "yunmen")
 	if err != nil {
-		return nil, "", errors.New("unsupported private key type")
+		return store.KeyMaterial{}, errors.New("unsupported private key type")
 	}
 	if k, ok := raw.(*rsa.PrivateKey); ok && k.N.BitLen() < 2048 {
-		return nil, "", errors.New("RSA keys shorter than 2048 bits are not supported")
+		return store.KeyMaterial{}, errors.New("RSA keys shorter than 2048 bits are not supported")
 	}
-	return pem.EncodeToMemory(block), ssh.FingerprintSHA256(signer.PublicKey()), nil
+	return store.KeyMaterialFromPEM(pem.EncodeToMemory(block))
+}
+
+// GenerateKey creates a new Ed25519 key on the gateway.
+func GenerateKey() (store.KeyMaterial, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return store.KeyMaterial{}, err
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "yunmen")
+	if err != nil {
+		return store.KeyMaterial{}, err
+	}
+	return store.KeyMaterialFromPEM(pem.EncodeToMemory(block))
 }
