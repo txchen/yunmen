@@ -95,7 +95,7 @@ Inside a session every key goes to the server, Ctrl-C included. Type `Enter ~ .`
 
 - Yunmen, and Cloudflare when you use a tunnel, decrypt your terminal traffic on the way through. This is not end-to-end encryption between your device and the server.
 - The sign-in page is reachable by anyone who knows the address. Wrong guesses are rate limited per visitor and in total, so they cannot break in, but a determined attacker can briefly lock you out of signing in. See [docs/deployment.md](docs/deployment.md#exposure-without-cloudflare-access).
-- Yunmen is at v0.0.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
+- Yunmen is at v0.1.x. The Linux CLI and the gateway are tested against real OpenSSH servers. The macOS, Windows and ARM builds have not been run yet.
 - I've deployed the gateway myself and connected to it from the CLI. Long sessions through a real Cloudflare Tunnel, and the optional Cloudflare Access mode, still need testing in a real deployment. See [docs/open-questions.md](docs/open-questions.md).
 
 ## How to develop
