@@ -203,6 +203,9 @@ func TestPairingPollBoundToStartingPrincipal(t *testing.T) {
 
 func TestPairingApprovalNeedsPasswordAndTOTPEveryTime(t *testing.T) {
 	h := newHarness(t, ModeStandalone)
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	h.srv.pairings.now = func() time.Time { return time.Unix(0, clock.Load()) }
 	owner := h.browser()
 	owner.login()
 	cli := h.cli("")
@@ -214,14 +217,14 @@ func TestPairingApprovalNeedsPasswordAndTOTPEveryTime(t *testing.T) {
 	if st, _ := h.browser().do("POST", "/api/v1/pairings/approve", map[string]string{"userCode": code, "password": ownerPassword, "code": h.code()}); st != 401 {
 		t.Fatalf("approval without session: %d", st)
 	}
-	time.Sleep(2100 * time.Millisecond)
+	clock.Add(int64(pairPollInterval))
 	if _, res := cli.do("POST", "/api/v1/cli/pair/poll", map[string]string{"pollToken": start["pollToken"].(string)}); res["status"] != "pending" {
 		t.Fatalf("pairing not pending: %v", res)
 	}
 	if st, _ := owner.do("POST", "/api/v1/pairings/approve", map[string]string{"userCode": strings.ToLower(strings.ReplaceAll(code, "-", "")), "password": ownerPassword, "code": h.code()}); st != 204 {
 		t.Fatalf("valid approval: %d", st)
 	}
-	time.Sleep(2100 * time.Millisecond)
+	clock.Add(int64(pairPollInterval))
 	_, res := cli.do("POST", "/api/v1/cli/pair/poll", map[string]string{"pollToken": start["pollToken"].(string)})
 	if res["status"] != "approved" {
 		t.Fatalf("poll after approval: %v", res)
