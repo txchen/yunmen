@@ -61,9 +61,11 @@ func (c *Client) DialTerminal(ctx context.Context) (*websocket.Conn, error) {
 	h := http.Header{}
 	c.headers(h)
 	conn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
-		HTTPClient:   c.HTTP,
-		HTTPHeader:   h,
-		Subprotocols: []string{protocol.Subprotocol},
+		HTTPClient:           c.HTTP,
+		HTTPHeader:           h,
+		Subprotocols:         []string{protocol.Subprotocol},
+		CompressionMode:      websocket.CompressionNoContextTakeover,
+		CompressionThreshold: 1024,
 	})
 	if err != nil {
 		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {

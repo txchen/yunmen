@@ -114,6 +114,8 @@ All carry the Access service token headers. Except pairing, all carry the bearer
 
 `GET /api/v1/terminal`, WebSocket subprotocol `yunmen.term.v1` (required). Browser: same-origin with the session cookie. CLI: `Authorization: Bearer`, Access headers, no `Origin`.
 
+The gateway and CLI negotiate optional `permessage-deflate` compression without context takeover in either direction. They compress messages of at least 1 KiB; browser compression is managed by the browser. Clients that do not offer compression remain supported. Payload limits and flow-control counters refer to uncompressed bytes. Compression only affects the client-to-gateway WebSocket, not the gateway-to-target SSH connection. Avoiding context takeover limits cross-message compression side channels but does not eliminate same-message length leakage.
+
 Frames:
 
 - **Binary** frames are raw terminal bytes, both directions, at most 16 KiB each. Never decode them as lines; never convert newlines.

@@ -202,7 +202,11 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 		p = terminal.Principal{Cred: o.cred, Deadline: o.deadline}
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{protocol.Subprotocol}, InsecureSkipVerify: true})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		Subprotocols: []string{protocol.Subprotocol}, InsecureSkipVerify: true,
+		CompressionMode:      websocket.CompressionNoContextTakeover,
+		CompressionThreshold: 1024,
+	})
 	if err != nil {
 		return
 	}

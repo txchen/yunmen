@@ -51,7 +51,9 @@ func (c *client) wsHeaders() http.Header {
 // dialTerm upgrades and returns the HTTP status on failure (0 on success).
 func (c *client) dialTerm() (*websocket.Conn, int) {
 	conn, resp, err := websocket.Dial(context.Background(), wsURL(c.h), &websocket.DialOptions{
-		HTTPHeader: c.wsHeaders(), Subprotocols: []string{protocol.Subprotocol}})
+		HTTPHeader: c.wsHeaders(), Subprotocols: []string{protocol.Subprotocol},
+		CompressionMode:      websocket.CompressionNoContextTakeover,
+		CompressionThreshold: 1024})
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode
